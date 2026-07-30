@@ -56,23 +56,26 @@ stateDiagram-v2
     INITIALIZING --> ERROR_EXIT : Config/Schema Failure
 
     state RUNNING_SIMULATION {
-        [*] --> CheckEpochBoundary
+        [*] --> GenerateNominalBatch
         
+        state Nominal_Pass {
+            GenerateNominalBatch --> OutputPragmaticBaseline
+        }
+
         state Epoch_State_Engine {
-            CheckEpochBoundary --> EvaluateMacroShocks : Epoch Boundary Cross
+            OutputPragmaticBaseline --> EvaluateMacroShocks : Epoch Boundary Cross
             EvaluateMacroShocks --> Calculate2DDrift
             Calculate2DDrift --> ResolveStickyBoundaries
         }
 
-        state Step_Generation_Pipeline {
-            ResolveStickyBoundaries --> GenerateNominalBatch
-            GenerateNominalBatch --> ProcessBacklogQueue
-            ProcessBacklogQueue --> ApplyRealismFilter
-            ApplyRealismFilter --> ApplyMalformationFilter
+        state Realism_and_Corruption_Pipeline {
+            ResolveStickyBoundaries --> ApplyRealismFilter : Pass (Nominal + State M_t)
+            ApplyRealismFilter --> ProcessBacklogQueue
+            ProcessBacklogQueue --> ApplyMalformationFilter
         }
 
-        Step_Generation_Pipeline --> WriteToSink
-        WriteToSink --> CheckEpochBoundary : Increment Time Step (t < T)
+        Realism_and_Corruption_Pipeline --> WriteToSink
+        WriteToSink --> GenerateNominalBatch : Increment Time Step (t < T)
     }
 
     RUNNING_SIMULATION --> TERMINATING : Simulation Complete (t >= T)
@@ -117,6 +120,11 @@ entities:
     # Starting coordinates in the 2D Metric Space
     initial_metrics:
       attainment_pct: 94.0
+      lag_days: 0.2
+
+    # Absolute safety rail bounds
+    global_bounds:
+      attainment_pct: [0.0, 100.0]
       lag_days: 0.2
 
     # -------------------------------------------------------------------
@@ -246,12 +254,16 @@ Terminology will be domain-agnostic in nature with the following being the dicti
 
   * Macro-Shock Order of Operations: Rule here is that macro-shocks suppress and override normal drift for the selected epoch. Logic flow on this is that if a shock triggers, $S_t$ and $\mu_t$ are both set via the shock, local drift and boundary checks will be skipped for the epoch. Otherwise if the shock does not trigger, standard drift and boundary rules apply.
 
-  * Sigmoid Boundary Resolution: When true position $\mu_t$ moves toward a state boundary wall, the probability of "breaking through" the wall into an adjacent state box is governed by a Sigmoid Barrier Function:
-    $P(\text{Wall Break})=\frac{1}{1+e^{\lambda\cdot d}}$
+  * Exponential Decay Boundary Resolution: When true position $\mu_t$ moves toward a state boundary wall, the probability of "breaking through" the wall into an adjacent state box is governed by a Exponential Decay Barrier Function:
+    $P(\text{Wall Break})=(1.0-\kappa)\cdot e^{-\lambda\cdot d}$
 
-    d: Signed distance from $\mu_t$ to the nearest bounding box edge (d$\gt$0 inside, d$\leq$0 touching/outisde).
+    $\kappa$: This is the boundary stiffness whcih directly controls the probability at the exact wall
 
-    $\lambda$: Boundary Resistance scalr derived from `boundary_stiffness` ($\lambda=\frac{5.0}{\text{stiffness}}$).
+    d: is defined as the minimum signed perpendicular distance from true postion to the nearest inner edge:
+      $d=\min{x_t-X_{min}, X_{max}-x_t, y_t-Y_{min}, Y_{max}-y_t}$
+    Inisde the box, d is the shortest Euclidean distance to any wall along either axis, at the boundary $\mu_t$ touches or lies on an edge, and when pushed outside the box by drift, d is clamped to 0.0 for the wall-break evaluation. If the wall break roll fails, $\mu_t$ is snapped back to the box at boundary edge.
+
+    $\lambda$: Boundary Resistance scalar derived from `boundary_stiffness` ($\lambda=\frac{5.0}{\text{stiffness}}$).
 
     Execution: If $P(\text{Wall Break})\gt \text{RNG}()$, the entity transitions to the adjacent state box and snaps its baseline $\mu_t$ inside the new state bounds.
 
@@ -302,6 +314,9 @@ stateDiagram-v2
   * OOB Safeguard: Hard global bounds ([GLOBAL_MIN, GLOBAL_MAX]) clamp both $\mu_t$ and $M_t$ as a final safety rail.
 
   * Deferral/Backlog Queue Dynamics: This is a one way coupled system, Observed attainment ($M_t$) directly drives the daily fulfillment probability $P_{\text{fulfillment}}=M_t$. As $M_t$ drops, load deferral spikes. The resulting backlog depth is emitted as an auxiliary output column, keeping queue dynamics clean without creating unstable recursive feedback loops into $\mu_t$.
+
+  * To prevent mixing percentages with probailities, $P_{\text{fulfillment}}$ will first pass through this normalization clamp formula:
+    $P_{\text{fulfillment}} = \text{clamp}\left(\frac{M_t}{100.0}, 0.0, 1.0 \right)
 
 * **Malformations Filter:** - This pass uniquely adds a level of corruption to the data file. This is done at a fixed percentage chance per the config and will apply things like changes to spelling, formatting errors etc. This is a toggleable module.
 
