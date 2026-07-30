@@ -22,12 +22,24 @@ The intial program will be a configurable .yaml file which then can be executed 
 
 ```mermaid
 flowchart TD
-    A[Config Reader] --> B[State Engine]
-    B --> C[Nominal Generator]
+    A[Config Reader] --> B[Nominal Generator]
+    B --> C[State Engine]
     C --> D[Realism Filter]
     D --> E[Malformations Filter]
     E --> F[File Sink]
 ```
+
+During this step the high level data responsibilies are as follows:
+
+* Nominal Generator -> Generates an ideal "Pragmatic Baseline" (e.g., 50 scheduled loads at t=10). Zero state awareness, zero noise.
+
+* State Engine -> Computes TRUE underlying state ($S_t$) and TRUE metric position ($\mu_t$). Calculates macro-drift and boundary checks.
+
+* Realism Filter -> Combines nominal baseline + state engine outputs:
+  * Applies volatility noise: Observed Metric $M_t = \mu_t$ + Noise
+  * Executes deferral queue: Uses $M_t$ to roll/cancel events.
+
+* Malformations -> Schema & syntax corruption (nulls, string typos, etc.).
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +99,7 @@ TBD Post MVP
 
 ### 2.4 Interfaces
 
-Currently the only accepted input stream for the program is a config.yaml file outlined below:
+Currently the only accepted input stream for the program is a config.yaml file outlined below using sample selections:
 
 ```yaml
 simulation:
@@ -177,7 +189,28 @@ entities:
         cancellation: 0.05             # Instant drop
       aging_rules:
         cancel_escalation_per_epoch: 0.15 # +15% cancel chance per rolled day
+
+output:
+  format: "csv"                   # "csv", "json", etc.
+  path: "outputs/generated_data.csv"
+
+  # 1. USER REQUESTED DATA (Custom payload mapping)
+  fields:
+    - name: "timestamp"           # Output column header
+      source: "simulation_time"   # Engine variable
+    - name: "carrier_code"        # Output column header
+      source: "entity_id"         # Engine variable
+    - name: "attainment_rate"     # Output column header
+      source: "metrics.attainment_pct" # Maps M_t for attainment_pct
+
+  # 2. OPTIONAL TOGGLES (Engine Metadata & Debug Flags)
+  metadata_toggles:
+    include_state: true           # Appends "state" column (e.g., "HEALTHY")
+    include_malformed_flag: false # Appends "is_malformed" boolean column
+    include_true_baseline: false  # Appends "true_position" (mu_t) column for debugging
 ```
+
+The file sink produces dynamic schemas based on the `output.fields` array defined in the configuration. Users map standard engine attibutes (timestamps, entity IDs, metric values) to arbitrary column headers. Optional boolean flags under metadata_toggles allow users to selectively append system state labels, noise flags, or true baselines for validation and debugging.
 
 ### 2.5 Data Model
 
@@ -191,15 +224,40 @@ Terminology will be domain-agnostic in nature with the following being the dicti
 
 * **Epoch:** Time interval between state transition checks
 
+* **True Metric Position ($\mu_t$):** The deterministic baseline coordinate of the entity. State transitions and 2D bounding box checks run exclusively on $\mu_t$.
+
+* **Observed Metric ($M_t$):** The final emitted value equal to $\mu_t +$ Volatility Noise ($\mathcal{N}(0,\sigma^{2})$).
+
+* **Global Bounds:** Absolute physical boundaries that clamp values to prevent Out-Of-Bounds (OOB) compounding.
+
+* **epoch_interval:** How often the state engine re-evaluates state transitions, macro-shocks and updates $\mu_t$.
+
+* **data_resolution:** How often output rows are emitted.
+
 ---
 
 ## 3.0 Detailed Design
 
 ### 3.1 Details
 
-* **Configuration Reader:** - The purpose of this module is to read in the configurations in order to identify how the data generation needs to occur.
+* **Configuration Reader:** - The purpose of this module is to read in the configurations in order to identify how the data generation needs to occur. Contains fail-fast check asserting that `initial_metrics` falls strictly within the `bounds` of `initial_state`.
 
 * **State Engine:** - The purpose of this module is to evaluate the state and state transitions of each entity over a given epoch. This module allows probablistic changes and is not a fixed event generator. This is a toggleable module.
+
+  * Macro-Shock Order of Operations: Rule here is that macro-shocks suppress and override normal drift for the selected epoch. Logic flow on this is that if a shock triggers, $S_t$ and $\mu_t$ are both set via the shock, local drift and boundary checks will be skipped for the epoch. Otherwise if the shock does not trigger, standard drift and boundary rules apply.
+
+  * Sigmoid Boundary Resolution: When true position $\mu_t$ moves toward a state boundary wall, the probability of "breaking through" the wall into an adjacent state box is governed by a Sigmoid Barrier Function:
+    $P(\text{Wall Break})=\frac{1}{1+e^{\lambda\cdot d}}$
+
+    d: Signed distance from $\mu_t$ to the nearest bounding box edge (d$\gt$0 inside, d$\leq$0 touching/outisde).
+
+    $\lambda$: Boundary Resistance scalr derived from `boundary_stiffness` ($\lambda=\frac{5.0}{\text{stiffness}}$).
+
+    Execution: If $P(\text{Wall Break})\gt \text{RNG}()$, the entity transitions to the adjacent state box and snaps its baseline $\mu_t$ inside the new state bounds.
+
+  * Resolution vs. Epoch Interpolation: Within an epoch, for each sub-step tick $dt=\frac{\text{resolution}}{\text{epoch_interval}}$, fractional drift is applied incrementally:
+    $\mu_{t+dt}=\mu_t+(\text{drift_rate}\cdot dt)+\mathcal{N}(0,\sigma\sqrt{dt})$
+  This creates smooth continuous intra-epoch motion rather than jagged teleports at epoch boundaries.
 
 ```mermaid
 stateDiagram-v2
@@ -239,9 +297,15 @@ stateDiagram-v2
 
 * **Realism Filter:** - This pass allows the intended data to be adjusted by realistic metric additions (e.g., drift or attainment failures)
 
+  * Obscured Border Effect: If a state border sits at 0.8 and $\mu_t$=0.78, a volitility drawdown ($\sigma$=0.05) might output an observed $M_t$=0.83. The output appears to have crossed boundaries into a new state, however the true state remains unchanged. This mimics real-world measurement noise obscuring internal operational boundaries.
+
+  * OOB Safeguard: Hard global bounds ([GLOBAL_MIN, GLOBAL_MAX]) clamp both $\mu_t$ and $M_t$ as a final safety rail.
+
+  * Deferral/Backlog Queue Dynamics: This is a one way coupled system, Observed attainment ($M_t$) directly drives the daily fulfillment probability $P_{\text{fulfillment}}=M_t$. As $M_t$ drops, load deferral spikes. The resulting backlog depth is emitted as an auxiliary output column, keeping queue dynamics clean without creating unstable recursive feedback loops into $\mu_t$.
+
 * **Malformations Filter:** - This pass uniquely adds a level of corruption to the data file. This is done at a fixed percentage chance per the config and will apply things like changes to spelling, formatting errors etc. This is a toggleable module.
 
-* **File Sink:** - This is the output of the program. During the MVP portion this is selectable to either a CSV or JSON output.
+* **File Sink:** - This is the output of the program. During the MVP portion this is selectable to either a CSV or JSON output. The output module (CSV/JSON). Streams output to a temporary file (.tmp_output.csv) during execution. Upon reaching the TERMINATING state, the file is atomically renamed to the configured path. On runtime exceptions (ERROR_EXIT), the temporary file is purged to prevent partial/corrupted writes.
 
 ### 3.2 Dependencies
 
@@ -252,6 +316,14 @@ stateDiagram-v2
 * custom_utils for logging
 
 * pytest for testing
+
+* RNG Substream Strategy: To ensure entity B's config doesn't break entity A's deterministic sequence:
+  * The master `seed` initializes a `numpy.random.SeedSequence`
+  * Each entity spawns an isolated `BitGenerator` stream derived from its unique `entity_id`:
+  ```python
+  entity_seed = seed_sequence.spawn_key(hash(entity_id))
+  entity_rng = np.random.default_rng(entity_seed)
+  ```
 
 ### 3.3 Technical Debt
 
@@ -310,3 +382,5 @@ Using the `custom_utils` logger function, each step along the path will be captu
 * CLI / GUI implementation
 
 * Alternative data streams as the needs arise
+
+* Multi-entity correlation (shared shocks)
