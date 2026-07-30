@@ -29,6 +29,52 @@ flowchart TD
     E --> F[File Sink]
 ```
 
+```mermaid
+stateDiagram-v2
+    [*] --> INITIALIZING
+
+    state INITIALIZING {
+        [*] --> ParseConfig
+        ParseConfig --> ValidateSchema
+        ValidateSchema --> InitializeEntities
+        InitializeEntities --> SeedRNG
+    }
+
+    INITIALIZING --> RUNNING_SIMULATION : Config Valid
+    INITIALIZING --> ERROR_EXIT : Config/Schema Failure
+
+    state RUNNING_SIMULATION {
+        [*] --> CheckEpochBoundary
+        
+        state Epoch_State_Engine {
+            CheckEpochBoundary --> EvaluateMacroShocks : Epoch Boundary Cross
+            EvaluateMacroShocks --> Calculate2DDrift
+            Calculate2DDrift --> ResolveStickyBoundaries
+        }
+
+        state Step_Generation_Pipeline {
+            ResolveStickyBoundaries --> GenerateNominalBatch
+            GenerateNominalBatch --> ProcessBacklogQueue
+            ProcessBacklogQueue --> ApplyRealismFilter
+            ApplyRealismFilter --> ApplyMalformationFilter
+        }
+
+        Step_Generation_Pipeline --> WriteToSink
+        WriteToSink --> CheckEpochBoundary : Increment Time Step (t < T)
+    }
+
+    RUNNING_SIMULATION --> TERMINATING : Simulation Complete (t >= T)
+    RUNNING_SIMULATION --> ERROR_EXIT : Runtime Exception
+
+    state TERMINATING {
+        [*] --> FlushBuffers
+        FlushBuffers --> WriteLogSummary
+        WriteLogSummary --> [*]
+    }
+
+    ERROR_EXIT --> [*]
+```
+
 ### 2.2 Functional Requirements
 
 * Must accept a .yaml config path
@@ -154,6 +200,40 @@ Terminology will be domain-agnostic in nature with the following being the dicti
 * **Configuration Reader:** - The purpose of this module is to read in the configurations in order to identify how the data generation needs to occur.
 
 * **State Engine:** - The purpose of this module is to evaluate the state and state transitions of each entity over a given epoch. This module allows probablistic changes and is not a fixed event generator. This is a toggleable module.
+
+```mermaid
+stateDiagram-v2
+    [*] --> InitialState
+
+    state "HEALTHY\n[Attainment: 85-100%, Lag: 0-1d]" as HEALTHY
+    state "DEGRADED\n[Attainment: 65-85%, Lag: 1-3d]" as DEGRADED
+    state "CRITICAL\n[Attainment: 0-65%, Lag: 3-10d]" as CRITICAL
+
+    InitialState --> HEALTHY : Initialize at (X_0, Y_0)
+
+    %% Boundary Transitions (Spatial Physics)
+    HEALTHY --> DEGRADED : Boundary Penetration\n(Distance d -> 0, P_wall roll)
+    DEGRADED --> HEALTHY : Positive Recovery Drift\n(Cross Upper Boundary)
+    DEGRADED --> CRITICAL : Negative Drift / Wall Break\n(Cross Lower Boundary)
+    CRITICAL --> DEGRADED : Recovery Drift\n(Cross Upper Boundary)
+
+    %% Macro Shocks ("Magic Teleports")
+    HEALTHY --> CRITICAL : Macro Shock\n(e.g., Regional Disaster)
+    DEGRADED --> CRITICAL : Macro Shock
+    CRITICAL --> HEALTHY : Macro Shock Override\n(e.g., Contract Bailout)
+
+    note right of HEALTHY
+        - Positive/Stable Drift
+        - Low Volatility
+        - Low Event Deferral Rate
+    end note
+
+    note right of CRITICAL
+        - Negative Drift Slope
+        - High Volatility
+        - Backlog TTL Cancellations
+    end note
+```
 
 * **Nominal Generator:** - The purpose of this module is the intital pass through the data, in this step an "ideal" generation is performed ensuring every potential and expected slot is filled.
 
