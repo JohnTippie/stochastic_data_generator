@@ -1,0 +1,147 @@
+# =====================================================================
+# 1. SIMULATION ENGINE METADATA
+# =====================================================================
+simulation:
+  seed: "42"                        # PRNG Seed for deterministic execution
+  start_time: "2026-01-01T00:00:00Z" # ISO-8601 Timestamp
+  duration: "90d"                   # Simulation span [quantity][unit] (e.g., 90d, 12h, 30m)
+  data_resolution: "1d"            # Row generation frequency
+  epoch_interval: "1d"             # State Engine evaluation frequency
+
+# =====================================================================
+# 2. N-DIMENSIONAL METRIC SPACE DEFINITIONS
+# Defines the canonical degrees of freedom (N-dimensions) for the run.
+# =====================================================================
+metrics:
+  - name: "metric_1"                # Metric key name (used in states & outputs)
+    is_derivative: false            # True if calculated/derived from other metrics
+    primitive_type: "float"         # Target primitive type (float, int, bool)
+
+  - name: "metric_2"
+    is_derivative: false
+    primitive_type: "float"
+
+# =====================================================================
+# 3. GLOBAL CONFIGURATION TOGGLES & FALLBACK DEFAULTS
+# =====================================================================
+toggles:
+  use_global_limits: true           # If true, entities inherit global_limits unless overridden
+  use_global_behavior: true         # If true, entities inherit global_behavior_states
+  use_global_macro_shock: true      # If true, entities inherit global_macro_shocks
+
+# Absolute safety rail bounds (Global Fallback)
+global_limits:
+  metric_1: [0.0, 100.0]            # Hard [min, max] limits per metric
+  metric_2: [0.0, 10.0]
+
+# Global Behavior States (Fallback if entity does not define custom states)
+global_behavior_states:
+  - name: "STATE_ALPHA"
+    # N-Dimensional State Bounding Box [min, max] for each metric
+    state_bounds:
+      metric_1: [85.0, 100.0]
+      metric_2: [0.0, 1.0]
+    
+    # Linear drift rate per metric per epoch (vector addition: mu_t + drift)
+    drift_rates:
+      metric_1: 0.1
+      metric_2: -0.05
+    
+    # Gaussian noise volatility (std dev) per metric (M_t = mu_t + noise)
+    volatilities:
+      metric_1: 0.5
+      metric_2: 0.05
+    
+    # Sticky boundary resistance [0.0 = weak wall, 1.0 = solid wall]
+    boundary_stiffness: 0.8
+
+  - name: "STATE_BETA"
+    state_bounds:
+      metric_1: [0.0, 85.0]
+      metric_2: [1.0, 10.0]
+    drift_rates:
+      metric_1: -1.0
+      metric_2: 0.5
+    volatilities:
+      metric_1: 2.0
+      metric_2: 0.2
+    boundary_stiffness: 0.3
+
+# Global Macro Shocks ("Magic Teleports" / Black Swans)
+global_macro_shocks:
+  - name: "systemic_disruption"
+    probability_per_epoch: 0.002    # Epoch trigger probability
+    target_state: "STATE_BETA"     # Target state to force-set
+    instant_metric_overrides:       # Immediate coordinate relocation
+      metric_1: 40.0
+      metric_2: 5.0
+
+# =====================================================================
+# 4. ENTITY DEFINITIONS & SPECIFIC OVERRIDES
+# =====================================================================
+entities:
+  - id: "entity_001"
+    entity_type: "category_a"        # Optional metadata string for payload mapping
+    initial_state: "STATE_ALPHA"    # Starting state regime
+    
+    # Starting baseline coordinates (mu_0) in N-dimensional metric space
+    initial_metrics:
+      metric_1: 95.0
+      metric_2: 0.2
+
+    # OPTIONAL OVERRIDE: Custom safety rail limits for this specific entity
+    metric_bounds:
+      metric_1: [0.0, 100.0]
+      metric_2: [0.0, 10.0]
+
+    # OPTIONAL OVERRIDE: Entity-specific behavior states
+    # (Only parsed if toggles.use_global_behavior == false)
+    behavior_states: []
+
+    # OPTIONAL OVERRIDE: Entity-specific macro shocks
+    # (Only parsed if toggles.use_global_macro_shock == false)
+    macro_shocks: []
+
+    # -----------------------------------------------------------------
+    # BACKLOG & DEFERRAL POLICY (Queue Aging Rules)
+    # -----------------------------------------------------------------
+    deferral_policy:
+      enabled: true
+      driver_metric: "metric_1"      # The metric M_t that drives fulfillment probability
+      max_drift_ttl_epochs: 3        # Force cancellation after N deferred steps
+      
+      base_probabilities:
+        fulfillment: 0.85            # Base P_fulfillment (overridden dynamically by M_t)
+        deferral: 0.10               # Base roll chance
+        cancellation: 0.05           # Base drop chance
+      
+      aging_rules:
+        cancel_escalation_per_epoch: 0.15 # Added cancel risk per rolled epoch
+
+# =====================================================================
+# 5. OUTPUT SINK & PAYLOAD SCHEMA MAPPING
+# =====================================================================
+output:
+  format: "csv"                      # Output file format ("csv", "json")
+  path: "outputs/simulation_run.csv" # Destination file path
+
+  # Payload Column Mapping (Engine attribute -> Target header)
+  fields:
+    - name: "timestamp"
+      source: "simulation_time"
+    - name: "entity_identifier"
+      source: "entity_id"
+    - name: "entity_category"
+      source: "entity_type"
+    - name: "primary_val"
+      source: "metrics.metric_1"     # Maps observed M_t of metric_1
+    - name: "secondary_val"
+      source: "metrics.metric_2"     # Maps observed M_t of metric_2
+    - name: "pending_backlog"
+      source: "backlog_depth"
+
+  # System Metadata Flags (Appended to payload if enabled)
+  metadata_toggles:
+    include_state: true              # Appends active state name (e.g., "STATE_ALPHA")
+    include_malformed_flag: false    # Appends boolean flag if row was corrupted
+    include_true_baseline: false     # Appends true position (mu_t) vector for debugging

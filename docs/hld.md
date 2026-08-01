@@ -105,117 +105,153 @@ TBD Post MVP
 Currently the only accepted input stream for the program is a config.yaml file outlined below using sample selections:
 
 ```yaml
+# =====================================================================
+# 1. SIMULATION ENGINE METADATA
+# =====================================================================
 simulation:
-  seed: 42
-  start_time: "2026-01-01T00:00:00Z"
-  duration: "90d"
-  data_resolution: "1d"         # Daily record generation
-  epoch_interval: "1d"          # Evaluate state/drift every day
+  seed: "42"                        # PRNG Seed for deterministic execution
+  start_time: "2026-01-01T00:00:00Z" # ISO-8601 Timestamp
+  duration: "90d"                   # Simulation span [quantity][unit] (e.g., 90d, 12h, 30m)
+  data_resolution: "1d"            # Row generation frequency
+  epoch_interval: "1d"             # State Engine evaluation frequency
 
-entities:
-  - id: "carrier_beta"
-    entity_type: "logistics_partner"
-    initial_state: "HEALTHY"
+# =====================================================================
+# 2. N-DIMENSIONAL METRIC SPACE DEFINITIONS
+# Defines the canonical degrees of freedom (N-dimensions) for the run.
+# =====================================================================
+metrics:
+  - name: "metric_1"                # Metric key name (used in states & outputs)
+    is_derivative: false            # True if calculated/derived from other metrics
+    primitive_type: "float"         # Target primitive type (float, int, bool)
+
+  - name: "metric_2"
+    is_derivative: false
+    primitive_type: "float"
+
+# =====================================================================
+# 3. GLOBAL CONFIGURATION TOGGLES & FALLBACK DEFAULTS
+# =====================================================================
+toggles:
+  use_global_limits: true           # If true, entities inherit global_limits unless overridden
+  use_global_behavior: true         # If true, entities inherit global_behavior_states
+  use_global_macro_shock: true      # If true, entities inherit global_macro_shocks
+
+# Absolute safety rail bounds (Global Fallback)
+global_limits:
+  metric_1: [0.0, 100.0]            # Hard [min, max] limits per metric
+  metric_2: [0.0, 10.0]
+
+# Global Behavior States (Fallback if entity does not define custom states)
+global_behavior_states:
+  - name: "STATE_ALPHA"
+    # N-Dimensional State Bounding Box [min, max] for each metric
+    state_bounds:
+      metric_1: [85.0, 100.0]
+      metric_2: [0.0, 1.0]
     
-    # Starting coordinates in the 2D Metric Space
+    # Linear drift rate per metric per epoch (vector addition: mu_t + drift)
+    drift_rates:
+      metric_1: 0.1
+      metric_2: -0.05
+    
+    # Gaussian noise volatility (std dev) per metric (M_t = mu_t + noise)
+    volatilities:
+      metric_1: 0.5
+      metric_2: 0.05
+    
+    # Sticky boundary resistance [0.0 = weak wall, 1.0 = solid wall]
+    boundary_stiffness: 0.8
+
+  - name: "STATE_BETA"
+    state_bounds:
+      metric_1: [0.0, 85.0]
+      metric_2: [1.0, 10.0]
+    drift_rates:
+      metric_1: -1.0
+      metric_2: 0.5
+    volatilities:
+      metric_1: 2.0
+      metric_2: 0.2
+    boundary_stiffness: 0.3
+
+# Global Macro Shocks ("Magic Teleports" / Black Swans)
+global_macro_shocks:
+  - name: "systemic_disruption"
+    probability_per_epoch: 0.002    # Epoch trigger probability
+    target_state: "STATE_BETA"     # Target state to force-set
+    instant_metric_overrides:       # Immediate coordinate relocation
+      metric_1: 40.0
+      metric_2: 5.0
+
+# =====================================================================
+# 4. ENTITY DEFINITIONS & SPECIFIC OVERRIDES
+# =====================================================================
+entities:
+  - id: "entity_001"
+    entity_type: "category_a"        # Optional metadata string for payload mapping
+    initial_state: "STATE_ALPHA"    # Starting state regime
+    
+    # Starting baseline coordinates (mu_0) in N-dimensional metric space
     initial_metrics:
-      attainment_pct: 94.0
-      lag_days: 0.2
+      metric_1: 95.0
+      metric_2: 0.2
 
-    # Absolute safety rail bounds
-    global_bounds:
-      attainment_pct: [0.0, 100.0]
-      lag_days: 0.2
+    # OPTIONAL OVERRIDE: Custom safety rail limits for this specific entity
+    metric_bounds:
+      metric_1: [0.0, 100.0]
+      metric_2: [0.0, 10.0]
 
-    # -------------------------------------------------------------------
-    # 1. 2D STATE SPACE DEFINITIONS
-    # -------------------------------------------------------------------
-    states:
-      HEALTHY:
-        # 2D Bounding Box for this state region [min, max]
-        bounds:
-          attainment_pct: [85.0, 100.0]
-          lag_days: [0.0, 1.0]
-        
-        # Local drift physics within this region
-        drift:
-          attainment_rate: 0.1     # Slightly recovers over time
-          lag_rate: -0.05
-          volatility: 0.5          # Standard deviation of Gaussian noise
-        
-        # Sticky boundary resistance (higher = harder to push through edge)
-        boundary_stiffness: 0.8
+    # OPTIONAL OVERRIDE: Entity-specific behavior states
+    # (Only parsed if toggles.use_global_behavior == false)
+    behavior_states: []
 
-      DEGRADED:
-        bounds:
-          attainment_pct: [65.0, 85.0]
-          lag_days: [1.0, 3.0]
-        drift:
-          attainment_rate: -0.5    # Negative drift slope
-          lag_rate: 0.2
-          volatility: 1.2
-        boundary_stiffness: 0.4
+    # OPTIONAL OVERRIDE: Entity-specific macro shocks
+    # (Only parsed if toggles.use_global_macro_shock == false)
+    macro_shocks: []
 
-      CRITICAL:
-        bounds:
-          attainment_pct: [0.0, 65.0]
-          lag_days: [3.0, 10.0]
-        drift:
-          attainment_rate: -2.0
-          lag_rate: 0.8
-          volatility: 3.0
-        boundary_stiffness: 0.1
-
-    # -------------------------------------------------------------------
-    # 2. MACRO SHOCKS ("Magic Teleports" / Black Swans)
-    # Evaluated BEFORE normal 2D physics. Bypasses spatial boundaries.
-    # -------------------------------------------------------------------
-    macro_shocks:
-      - name: "regional_disaster"
-        probability_per_epoch: 0.002   # 0.2% chance per day
-        target_state: "CRITICAL"
-        instant_metric_overrides:      # Teleport coordinates
-          attainment_pct: 45.0
-          lag_days: 4.5
-
-      - name: "emergency_contract_bailout"
-        probability_per_epoch: 0.001   # 0.1% chance per day
-        target_state: "HEALTHY"
-        instant_metric_overrides:
-          attainment_pct: 90.0
-          lag_days: 0.5
-
-    # -------------------------------------------------------------------
-    # 3. BACKLOG & DEFERRAL POLICY (Queue Aging Rules)
-    # -------------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # BACKLOG & DEFERRAL POLICY (Queue Aging Rules)
+    # -----------------------------------------------------------------
     deferral_policy:
       enabled: true
-      max_drift_ttl_epochs: 3          # Hard cancellation after 3 days late
+      driver_metric: "metric_1"      # The metric M_t that drives fulfillment probability
+      max_drift_ttl_epochs: 3        # Force cancellation after N deferred steps
+      
       base_probabilities:
-        fulfillment: 0.85              # On-time execution
-        deferral: 0.10                 # Roll load to t+1
-        cancellation: 0.05             # Instant drop
+        fulfillment: 0.85            # Base P_fulfillment (overridden dynamically by M_t)
+        deferral: 0.10               # Base roll chance
+        cancellation: 0.05           # Base drop chance
+      
       aging_rules:
-        cancel_escalation_per_epoch: 0.15 # +15% cancel chance per rolled day
+        cancel_escalation_per_epoch: 0.15 # Added cancel risk per rolled epoch
 
+# =====================================================================
+# 5. OUTPUT SINK & PAYLOAD SCHEMA MAPPING
+# =====================================================================
 output:
-  format: "csv"                   # "csv", "json", etc.
-  path: "outputs/generated_data.csv"
+  format: "csv"                      # Output file format ("csv", "json")
+  path: "outputs/simulation_run.csv" # Destination file path
 
-  # 1. USER REQUESTED DATA (Custom payload mapping)
+  # Payload Column Mapping (Engine attribute -> Target header)
   fields:
-    - name: "timestamp"           # Output column header
-      source: "simulation_time"   # Engine variable
-    - name: "carrier_code"        # Output column header
-      source: "entity_id"         # Engine variable
-    - name: "attainment_rate"     # Output column header
-      source: "metrics.attainment_pct" # Maps M_t for attainment_pct
+    - name: "timestamp"
+      source: "simulation_time"
+    - name: "entity_identifier"
+      source: "entity_id"
+    - name: "entity_category"
+      source: "entity_type"
+    - name: "primary_val"
+      source: "metrics.metric_1"     # Maps observed M_t of metric_1
+    - name: "secondary_val"
+      source: "metrics.metric_2"     # Maps observed M_t of metric_2
+    - name: "pending_backlog"
+      source: "backlog_depth"
 
-  # 2. OPTIONAL TOGGLES (Engine Metadata & Debug Flags)
+  # System Metadata Flags (Appended to payload if enabled)
   metadata_toggles:
-    include_state: true           # Appends "state" column (e.g., "HEALTHY")
-    include_malformed_flag: false # Appends "is_malformed" boolean column
-    include_true_baseline: false  # Appends "true_position" (mu_t) column for debugging
+    include_state: true              # Appends active state name (e.g., "STATE_ALPHA")
+    include_malformed_flag: false    # Appends boolean flag if row was corrupted
+    include_true_baseline: false     # Appends true position (mu_t) vector for debugging
 ```
 
 The file sink produces dynamic schemas based on the `output.fields` array defined in the configuration. Users map standard engine attibutes (timestamps, entity IDs, metric values) to arbitrary column headers. Optional boolean flags under metadata_toggles allow users to selectively append system state labels, noise flags, or true baselines for validation and debugging.
@@ -236,7 +272,7 @@ Terminology will be domain-agnostic in nature with the following being the dicti
 
 * **Observed Metric ($M_t$):** The final emitted value equal to $\mu_t +$ Volatility Noise ($\mathcal{N}(0,\sigma^{2})$).
 
-* **Global Bounds:** Absolute physical boundaries that clamp values to prevent Out-Of-Bounds (OOB) compounding.
+* **Global Bounds:** Absolute physical boundaries that clamp values to prevent Out-Of-Bounds (OOB) compounding. This can change per entity.
 
 * **epoch_interval:** How often the state engine re-evaluates state transitions, macro-shocks and updates $\mu_t$.
 
