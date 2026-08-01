@@ -30,10 +30,10 @@ def main() -> int:
                     f"Run seed: '{config.simulation.seed}', Entities: {len(config.entities)}")
     except ConfigError as e:
         logger.error(f"Configuration ingestion failed: {e}")
-        return 1
+        raise ConfigError(f"Configuration error encountered: {e}") from e
     except Exception as e:
         logger.critical(f"Unexpected error occured during configuration startup: {e}")
-        return 1
+        raise ConfigError(f"Unknown error encountered: {e}") from e
 
     # ====================================
     # Nominal Generator

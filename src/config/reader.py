@@ -2,8 +2,8 @@ from pathlib import Path
 import logging
 import yaml
 from pydantic import ValidationError
-from typing import Iterable
-from .schemas import SimulationConfig
+from typing import Iterable, TypeVar
+from .schemas import SimulationConfig, EntityConfig
 from .exceptions import (
     ConfigError,
     ConfigNotFoundError,
@@ -17,6 +17,7 @@ from .exceptions import (
 # ================================================
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 class ConfigReader:
 
@@ -64,10 +65,12 @@ class ConfigReader:
 
         logger.debug("Executing semantic cross-field invariant checks...")
         cls._validate_unique_metric_names(config)
+        cls._validate_unique_entity_ids(config)
         cls._validate_toggle_data_alignment(config)
         cls._validate_dimensional_alignment(config)
         cls._validate_macro_shocks(config)
         cls._validate_initial_coordinates(config)
+        cls._validate_output_field_sources(config)
 
         logger.info(
             f"Config parsed successfully: {len(config.metrics)} metrics, "
@@ -75,6 +78,23 @@ class ConfigReader:
             f"state_engine={config.toggles.enable_state_engine}"
         )
         return config
+
+    @classmethod
+    def _resolve_effective(
+        cls,
+        entity_val: T | None,
+        use_global_toggle: bool,
+        global_val: T | None,
+        default_fallback: T
+    ) -> T:
+        """
+        Resolves effective config for an entity field
+
+        If use_global_toggle is True, use global_val else use entity_val
+        """
+        if use_global_toggle:
+            return global_val if global_val is not None else default_fallback
+        return entity_val if entity_val is not None else default_fallback
 
     @classmethod
     def _validate_unique_metric_names(cls, config: SimulationConfig) -> None:
@@ -86,6 +106,17 @@ class ConfigReader:
             if metric.name in seen_names:
                 raise InvalidSchemaError(f"Duplicate metric definition found for key '{metric.name}'. Metric names must be unique.")
             seen_names.add(metric.name)
+
+    @classmethod
+    def _validate_unique_entity_ids(cls, config: SimulationConfig) -> None:
+        """Enforces that all entities possess non-empty, unique string IDs."""
+        seen_ids: set[str] = set()
+        for entity in config.entities:
+            if not entity.id or not entity.id.strip():
+                raise InvalidSchemaError("Entity contains an empty or missing 'id'.")
+            if entity.id in seen_ids:
+                raise InvalidSchemaError(f"Duplicate entity ID found: '{entity.id}'")
+            seen_ids.add(entity.id)
 
     @classmethod
     def _validate_dimensional_alignment(cls, config: SimulationConfig) -> None:
@@ -153,22 +184,26 @@ class ConfigReader:
 
         # Validate entity custom macro shocks
         for entity in config.entities:
-            entity_state_names = (
-                {s.name for s in entity.behavior_states}
-                if (not config.toggles.use_global_behavior and entity.behavior_states)
-                else global_state_names
+            effective_states = cls._resolve_effective(
+                entity_val=entity.behavior_states,
+                use_global_toggle=config.toggles.use_global_behavior,
+                global_val=config.global_behavior_states,
+                default_fallback=[],
             )
-            shocks = (
-                entity.macro_shocks
-                if (not config.toggles.use_global_macro_shock and entity.macro_shocks)
-                else []
+            effective_shocks = cls._resolve_effective(
+                entity_val=entity.macro_shocks,
+                use_global_toggle=config.toggles.use_global_macro_shock,
+                global_val=config.global_macro_shocks,
+                default_fallback=[],
             )
 
-            for shock in shocks:
-                if shock.target_state and shock.target_state not in entity_state_names:
+            valid_state_names = {s.name for s in effective_states}
+
+            for shock in effective_shocks:
+                if shock.target_state and shock.target_state not in valid_state_names:
                     raise InvalidSchemaError(
                         f"Macro shock '{shock.name}' in entity '{entity.id}' references target_state "
-                        f"'{shock.target_state}' which does not exist in active states."
+                        f"'{shock.target_state}' which does not exist in resolved active states."
                     )
 
     @classmethod
@@ -194,14 +229,20 @@ class ConfigReader:
 
         for entity in config.entities:
             # Resolve effective safety limits
-            effective_limits = entity.metric_bounds or config.global_limits or {}
+            effective_limits = cls._resolve_effective(
+                entity.metric_bounds,
+                config.toggles.use_global_limits,
+                config.global_limits,
+                default_fallback=[]
+                )
 
             # Resolve active behavior states for entity
-            states = (
-                entity.behavior_states
-                if (not config.toggles.use_global_behavior and entity.behavior_states)
-                else config.global_behavior_states
-            )
+            states = cls._resolve_effective(
+                entity.behavior_states,
+                config.toggles.use_global_behavior,
+                config.global_behavior_states,
+                default_fallback=[]
+                )
 
             matching_state = None
             if entity.initial_state and states:
@@ -239,18 +280,37 @@ class ConfigReader:
         """
         # 1. Global Behavior Toggle vs Data Check
         if config.toggles.use_global_behavior and not config.global_behavior_states:
-            raise InvalidSchemaError(
-                "Toggle 'use_global_behavior' is True, but 'global_behavior_states' is empty or missing."
-            )
+            raise InvalidSchemaError("Toggle 'use_global_behavior' is True, but 'global_behavior_states' is empty.")
 
-        # 2. Global Macro Shock Toggle vs Data Check
         if config.toggles.use_global_macro_shock and not config.global_macro_shocks:
-            raise InvalidSchemaError(
-                "Toggle 'use_global_macro_shock' is True, but 'global_macro_shocks' is empty or missing."
-            )
+            raise InvalidSchemaError("Toggle 'use_global_macro_shock' is True, but 'global_macro_shocks' is empty.")
 
-        # 3. Global Limits Toggle vs Data Check
         if config.toggles.use_global_limits and not config.global_limits:
-            raise InvalidSchemaError(
-                "Toggle 'use_global_limits' is True, but 'global_limits' is empty or missing."
-            )
+            raise InvalidSchemaError("Toggle 'use_global_limits' is True, but 'global_limits' is empty.")
+
+        # Guard: If state engine is enabled, every entity must resolve to at least one behavior state
+        if config.toggles.enable_state_engine:
+            for entity in config.entities:
+                effective_states = cls._resolve_effective(
+                    entity_val=entity.behavior_states,
+                    use_global_toggle=config.toggles.use_global_behavior,
+                    global_val=config.global_behavior_states,
+                    default_fallback=[],
+                )
+                if not effective_states:
+                    raise InvalidSchemaError(
+                        f"State engine is enabled, but entity '{entity.id}' resolves to no behavior states."
+                    )
+
+    @classmethod
+    def _validate_output_field_sources(cls, config: SimulationConfig) -> None:
+        """Verifies that output field sources pointing to metrics reference defined metric names."""
+        valid_metric_names = {m.name for m in config.metrics}
+        
+        for field in config.output.fields:
+            if field.source.startswith("metrics."):
+                target_metric = field.source.split("metrics.", 1)[1]
+                if target_metric not in valid_metric_names:
+                    raise InvalidSchemaError(
+                        f"Output field '{field.name}' references non-existent metric '{target_metric}' in source '{field.source}'."
+                    )

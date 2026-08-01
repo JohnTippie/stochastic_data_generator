@@ -80,7 +80,7 @@ def valid_config_dict() -> dict[str, typing.Any]:
                 "initial_metrics": {"metric_1": 95.0, "metric_2": 0.5},
                 "deferral_policy": {
                     "enabled": True,
-                    "driver_metric": "metric_1",  # <-- ADD THIS LINE
+                    "driver_metric": "metric_1",
                     "max_drift_ttl_epochs": 3,
                     "base_probabilities": {
                         "fulfillment": 0.85,
@@ -427,3 +427,116 @@ def test_edge_case_toggle_enabled_data_missing(
 
     with pytest.raises(InvalidSchemaError):
         ConfigReader.load_config(file_path)
+
+def test_duplicate_entity_ids_raises_invalid_schema_error(valid_config_dict, tmp_path):
+    """Verifies that duplicate entity IDs trigger an InvalidSchemaError."""
+    valid_config_dict["entities"] = [
+        {"id": "E001", "initial_state": "NOMINAL", "initial_metrics": {"temperature": 20.0}},
+        {"id": "E001", "initial_state": "NOMINAL", "initial_metrics": {"temperature": 25.0}},
+    ]
+    
+    config_file = tmp_path / "dup_id.yaml"
+    config_file.write_text(yaml.dump(valid_config_dict))
+
+    with pytest.raises(InvalidSchemaError, match="Duplicate entity ID found"):
+        ConfigReader.load_config(config_file)
+
+
+def test_missing_or_empty_entity_id_raises_invalid_schema_error(valid_config_dict, tmp_path):
+    """Verifies that empty string entity IDs trigger an InvalidSchemaError."""
+    valid_config_dict["entities"][0]["id"] = "   "
+    
+    config_file = tmp_path / "empty_id.yaml"
+    config_file.write_text(yaml.dump(valid_config_dict))
+
+    with pytest.raises(InvalidSchemaError, match="empty or missing 'id'"):
+        ConfigReader.load_config(config_file)
+
+def test_use_global_limits_false_disables_inheritance(valid_config_dict, tmp_path):
+    """
+    Verifies Model B logic: when use_global_limits is False and entity bounds are None,
+    no limits apply, allowing metric values outside global limits to pass without error.
+    """
+    # 1. Grab a valid metric name defined in the base test fixture
+    target_metric = valid_config_dict["metrics"][0]["name"]
+
+    # 2. Configure global limit on that valid metric
+    valid_config_dict["toggles"]["use_global_limits"] = False
+    valid_config_dict["global_limits"] = {target_metric: [95.0, 10.0]}
+    
+    # 3. Set entity value to 50.0 (outside [0, 10]) with entity bounds set to None
+    valid_config_dict["entities"][0]["initial_metrics"] = {target_metric: 90.0}
+    valid_config_dict["entities"][0]["metric_bounds"] = None
+
+    config_file = tmp_path / "global_limits_false.yaml"
+    config_file.write_text(yaml.dump(valid_config_dict))
+
+    # 4. Must pass cleanly because use_global_limits=False disables bound checking
+    config = ConfigReader.load_config(config_file)
+    assert config is not None
+
+def test_enable_state_engine_without_resolvable_states_raises_error(valid_config_dict, tmp_path):
+    """
+    Verifies that enabling state engine when an entity has no behavior states
+    and global behavior is toggled off raises an InvalidSchemaError.
+    """
+    valid_config_dict["toggles"]["enable_state_engine"] = True
+    valid_config_dict["toggles"]["use_global_behavior"] = False
+    valid_config_dict["global_behavior_states"] = []
+    valid_config_dict["entities"][0]["behavior_states"] = None
+
+    config_file = tmp_path / "no_states.yaml"
+    config_file.write_text(yaml.dump(valid_config_dict))
+
+    with pytest.raises(InvalidSchemaError, match="resolves to no behavior states"):
+        ConfigReader.load_config(config_file)
+
+def test_output_field_source_unknown_metric_raises_error(valid_config_dict, tmp_path):
+    """Verifies that an output field referencing a non-existent metric raises InvalidSchemaError."""
+    valid_config_dict["output"]["fields"].append({
+        "name": "bad_column",
+        "source": "metrics.non_existent_metric"
+    })
+
+    config_file = tmp_path / "bad_output_source.yaml"
+    config_file.write_text(yaml.dump(valid_config_dict))
+
+    with pytest.raises(InvalidSchemaError, match="references non-existent metric"):
+        ConfigReader.load_config(config_file)
+
+def test_extra_forbid_rejects_unknown_top_level_and_nested_keys(valid_config_dict, tmp_path):
+    """Verifies Pydantic extra='forbid' policy on top-level and nested structures."""
+    # 1. Top-Level Unknown Key
+    bad_root_dict = valid_config_dict.copy()
+    bad_root_dict["bogus_root_key"] = "unauthorized_data"
+    
+    file_root = tmp_path / "bad_root.yaml"
+    file_root.write_text(yaml.dump(bad_root_dict))
+    
+    with pytest.raises(InvalidSchemaError):
+        ConfigReader.load_config(file_root)
+
+    # 2. Nested Unknown Key inside Entity
+    bad_nested_dict = valid_config_dict.copy()
+    bad_nested_dict["entities"][0]["bogus_entity_key"] = 999
+    
+    file_nested = tmp_path / "bad_nested.yaml"
+    file_nested.write_text(yaml.dump(bad_nested_dict))
+
+    with pytest.raises(InvalidSchemaError):
+        ConfigReader.load_config(file_nested)
+
+def test_shipped_reference_config_yaml_is_valid():
+    """
+    Guarantees that the repository's root config.yaml remains in sync with 
+    the schema definitions as the codebase evolves.
+    """
+    reference_config_path = Path("config.yaml")
+    assert reference_config_path.exists(), "Root config.yaml was not found in repo root!"
+
+    # Must load cleanly without raising any Schema or Validation errors
+    config = ConfigReader.load_config(reference_config_path)
+    
+    assert config is not None
+    assert len(config.entities) > 0
+    assert len(config.metrics) > 0

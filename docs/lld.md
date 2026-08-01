@@ -24,7 +24,7 @@ This module is responsible for parsing external YAML configuration files and con
 
 2. **Metric Dimension Consistency:** Every metric key referenced inside `global_limits`, `state_bounds`, `drift_rates`, `volatilities`, and `initial_metrics` must match the manifest defined under top-level `metrics`.
 
-3. **Initial Coordinate Validity:** An entity's declared `initial_metrics` ($\mu_0$) must lie strictly inside the N-dimensional `state_bounds` of its declared `initial_state` and within its global or entity-specific `metric_bounds`.
+3. **Initial Coordinate Validity:** An entity's declared `initial_metrics` ($\mu_0$) must lie within the N-dimensional `state_bounds` of its declared `initial_state` and within its global or entity-specific `metric_bounds`.
 
 4. **Probability Clamping:** All probability fields (`probability_per_epoch`, `fulfillment`, `deferral`, `cancellation`) and `boundary_stiffness` values must lie within the closed invterval [0.0,1.0].
 
@@ -40,108 +40,7 @@ This module is responsible for parsing external YAML configuration files and con
 
 ### 1.6 Data Structures
 
-```python
-from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple
-from pydantic import BaseModel, Field, ConfigDict
-
-# Base model enforcing strict immutability across all configuration structs
-class FrozenConfigModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class SimulationMetadataConfig(FrozenConfigModel):
-    seed: str
-    start_time: str
-    duration: str
-    data_resolution: str
-    epoch_interval: str
-
-
-class MetricDefinitionConfig(FrozenConfigModel):
-    name: str
-    is_derivative: bool = False
-    primitive_type: Literal["float", "int", "bool"] = "float"
-
-
-class StateConfig(FrozenConfigModel):
-    name: str
-    state_bounds: Dict[str, Tuple[float, float]]  # e.g., {"metric_1": (85.0, 100.0)}
-    drift_rates: Dict[str, float]                 # e.g., {"metric_1": 0.1}
-    volatilities: Dict[str, float]                # e.g., {"metric_1": 0.5}
-    boundary_stiffness: float = Field(ge=0.0, le=1.0)
-
-
-class MacroShockConfig(FrozenConfigModel):
-    name: str
-    probability_per_epoch: float = Field(ge=0.0, le=1.0)
-    target_state: str
-    instant_metric_overrides: Dict[str, float]
-
-
-class DeferralBaseProbabilitiesConfig(FrozenConfigModel):
-    fulfillment: float = Field(ge=0.0, le=1.0)
-    deferral: float = Field(ge=0.0, le=1.0)
-    cancellation: float = Field(ge=0.0, le=1.0)
-
-
-class DeferralAgingRulesConfig(FrozenConfigModel):
-    cancel_escalation_per_epoch: float = Field(ge=0.0, le=1.0)
-
-
-class DeferralPolicyConfig(FrozenConfigModel):
-    enabled: bool
-    driver_metric: str
-    max_drift_ttl_epochs: int = Field(gt=0)
-    base_probabilities: DeferralBaseProbabilitiesConfig
-    aging_rules: DeferralAgingRulesConfig
-
-
-class TogglesConfig(FrozenConfigModel):
-    use_global_limits: bool = True
-    use_global_behavior: bool = True
-    use_global_macro_shock: bool = True
-
-
-class EntityConfig(FrozenConfigModel):
-    id: str
-    entity_type: Optional[str] = None
-    initial_state: str
-    initial_metrics: Dict[str, float]
-    metric_bounds: Optional[Dict[str, Tuple[float, float]]] = None
-    behavior_states: Optional[List[StateConfig]] = None
-    macro_shocks: Optional[List[MacroShockConfig]] = None
-    deferral_policy: DeferralPolicyConfig
-
-
-class OutputFieldMappingConfig(FrozenConfigModel):
-    name: str
-    source: str
-
-
-class MetadataTogglesConfig(FrozenConfigModel):
-    include_state: bool = True
-    include_malformed_flag: bool = False
-    include_true_baseline: bool = False
-
-
-class OutputConfig(FrozenConfigModel):
-    format: Literal["csv", "json"]
-    path: Path
-    fields: List[OutputFieldMappingConfig]
-    metadata_toggles: MetadataTogglesConfig
-
-
-class SimulationConfig(FrozenConfigModel):
-    simulation: SimulationMetadataConfig
-    metrics: List[MetricDefinitionConfig]
-    toggles: TogglesConfig
-    global_limits: Dict[str, Tuple[float, float]]
-    global_behavior_states: List[StateConfig]
-    global_macro_shocks: List[MacroShockConfig]
-    entities: List[EntityConfig]
-    output: OutputConfig
-```
+Configs and data structures will be frozen and immutable. These are documented in the schemas.py file.
 
 ### 1.7 Function Signatures
 

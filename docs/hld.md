@@ -372,7 +372,7 @@ stateDiagram-v2
   * The master `seed` initializes a `numpy.random.SeedSequence`
   * Each entity spawns an isolated `BitGenerator` stream derived from its unique `entity_id`:
   ```python
-  entity_seed = seed_sequence.spawn_key(hash(entity_id))
+  entity_seed = hashlib.sha256
   entity_rng = np.random.default_rng(entity_seed)
   ```
 

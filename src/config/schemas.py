@@ -66,7 +66,7 @@ class TogglesConfig(FrozenConfigModel):
     enable_malformations: bool = True
 
 class EntityConfig(FrozenConfigModel):
-    id: Optional[str] = None
+    id: str
     entity_type: Optional[str] = None
     initial_state: str
     initial_metrics: dict[str, float]
