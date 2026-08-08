@@ -1,3 +1,4 @@
 pydantic~=2.13.4
 pyyaml~=6.0.3
+numpy~=2.4.4
 git+https://github.com/JohnTippie/custom_utils.git@v0.1.1

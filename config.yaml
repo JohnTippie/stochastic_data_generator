@@ -2,11 +2,11 @@
 # 1. SIMULATION ENGINE METADATA
 # =====================================================================
 simulation:
-  seed: "42"                        # PRNG Seed for deterministic execution
-  start_time: "2026-01-01T00:00:00Z" # ISO-8601 Timestamp
-  duration: "90d"                   # Simulation span [quantity][unit] (e.g., 90d, 12h, 30m)
-  data_resolution: "1d"            # Row generation frequency
-  epoch_interval: "1d"             # State Engine evaluation frequency
+  seed: "42"                          # PRNG Seed for deterministic execution
+  start_time: "2026-01-01T00:00:00Z"  # ISO-8601 Timestamp
+  duration: "90d"                     # Simulation span [quantity][unit] (e.g., 90d, 12h, 30m)
+  data_resolution: "1d"               # Row generation frequency
+  epoch_interval: "1d"                # State Engine evaluation frequency
 
 # =====================================================================
 # 2. N-DIMENSIONAL METRIC SPACE DEFINITIONS
@@ -16,25 +16,27 @@ metrics:
   - name: "metric_1"                # Metric key name (used in states & outputs)
     is_derivative: false            # True if calculated/derived from other metrics
     primitive_type: "float"         # Target primitive type (float, int, bool)
+    formula:                        # Derivation formula required if derivative is true
 
   - name: "metric_2"
     is_derivative: false
     primitive_type: "float"
+    formula: 
 
 # =====================================================================
-# 3. GLOBAL CONFIGURATION TOGGLES & FALLBACK DEFAULTS
+# 3. GLOBAL CONFIGURATION TOGGLES & GLOBAL VALUES (IF APPLICABLE)
 # =====================================================================
 toggles:
-  use_global_limits: true           # If true, entities inherit global_limits unless overridden
+  use_global_limits: false           # If true, entities inherit global_limits unless overridden
   use_global_behavior: true         # If true, entities inherit global_behavior_states
   use_global_macro_shock: true      # If true, entities inherit global_macro_shocks
 
-# Absolute safety rail bounds (Global Fallback)
+# Global Bounding limits
 global_limits:
   metric_1: [0.0, 100.0]            # Hard [min, max] limits per metric
   metric_2: [0.0, 10.0]
 
-# Global Behavior States (Fallback if entity does not define custom states)
+# Global Behavior States
 global_behavior_states:
   - name: "STATE_ALPHA"
     # N-Dimensional State Bounding Box [min, max] for each metric
@@ -71,13 +73,13 @@ global_behavior_states:
 global_macro_shocks:
   - name: "systemic_disruption"
     probability_per_epoch: 0.002    # Epoch trigger probability
-    target_state: "STATE_BETA"     # Target state to force-set
+    target_state: "STATE_BETA"      # Target state to force-set
     instant_metric_overrides:       # Immediate coordinate relocation
       metric_1: 40.0
       metric_2: 5.0
 
 # =====================================================================
-# 4. ENTITY DEFINITIONS & SPECIFIC OVERRIDES
+# 4. ENTITY DEFINITIONS & ENTITY VALUES (IF APPLICABLE)
 # =====================================================================
 entities:
   - id: "entity_001"
@@ -89,16 +91,16 @@ entities:
       metric_1: 95.0
       metric_2: 0.2
 
-    # OPTIONAL OVERRIDE: Custom safety rail limits for this specific entity
+    # ENTITY BOUNDS: Custom safety rail limits for this specific entity
     metric_bounds:
       metric_1: [0.0, 100.0]
       metric_2: [0.0, 10.0]
 
-    # OPTIONAL OVERRIDE: Entity-specific behavior states
+    # ENTITY STATE: Entity-specific behavior states
     # (Only parsed if toggles.use_global_behavior == false)
     behavior_states: []
 
-    # OPTIONAL OVERRIDE: Entity-specific macro shocks
+    # ENTITY MACRO: Entity-specific macro shocks
     # (Only parsed if toggles.use_global_macro_shock == false)
     macro_shocks: []
 
@@ -110,7 +112,7 @@ entities:
       driver_metric: "metric_1"      # The metric M_t that drives fulfillment probability
       max_drift_ttl_epochs: 3        # Force cancellation after N deferred steps
       
-      base_probabilities:
+      base_probabilities:            # These must sum to 1.0
         fulfillment: 0.85            # Base P_fulfillment (overridden dynamically by M_t)
         deferral: 0.10               # Base roll chance
         cancellation: 0.05           # Base drop chance
