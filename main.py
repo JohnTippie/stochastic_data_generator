@@ -27,7 +27,7 @@ def main() -> int:
         logger.info(f"Loading configuration from: {config_path}")
         config: SimulationConfig = ConfigReader.load_config(config_path)
         logger.info(f"Configuration validated successfully. "
-                    f"Run seed: '{config.simulation.seed}', Entities: {len(config.entities)}")
+                    f"Run seed: '{config.meta.seed}', Entities: {len(config.entities)}")
     except ConfigError as e:
         logger.error(f"Configuration ingestion failed: {e}")
         raise ConfigError(f"Configuration error encountered: {e}") from e
