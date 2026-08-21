@@ -1,149 +1,310 @@
-# =====================================================================
-# 1. SIMULATION ENGINE METADATA
-# =====================================================================
+# ==============================================================================
+# 1. META & SIMULATION CONTROL
+# ==============================================================================
+meta:
+  scenario_name: "comprehensive_or_master_simulation"
+  description: "Unified master blueprint covering spatial graphs, shared resources, task DAGs, state regimes, and real-world data corruption."
+  seed: 42 # Master PRNG seed for deterministic execution
+
 simulation:
-  seed: "42"                          # PRNG Seed for deterministic execution
-  start_time: "2026-01-01T00:00:00Z"  # ISO-8601 Timestamp
-  duration: "90d"                     # Simulation span [quantity][unit] (e.g., 90d, 12h, 30m)
-  data_resolution: "1d"               # Row generation frequency
-  epoch_interval: "1d"                # State Engine evaluation frequency
+  start_time: "2026-09-01T00:00:00Z" # ISO-8601 start timestamp
+  duration: "30d"                     # Total run time [quantity][s|m|h|d|w]
+  data_resolution: "1m"               # Frequency of emitted output rows
+  epoch_interval: "1h"               # State engine & transition evaluation tick
 
-# =====================================================================
-# 2. N-DIMENSIONAL METRIC SPACE DEFINITIONS
-# Defines the canonical degrees of freedom (N-dimensions) for the run.
-# =====================================================================
+# ==============================================================================
+# 2. PIPELINE MODULE TOGGLES
+# Master switches that enable or bypass specific generation passes/engines
+# ==============================================================================
+pipeline_toggles:
+  use_state_engine: true
+  use_network_topology: true    # Unlocks graph routing & dynamic adjacency
+  use_resource_contention: true # Unlocks shared capacity locks (docks, cranes)
+  use_workflow_dag: true        # Unlocks task precedence / job-shop scheduling
+  use_realism_filter: true      # Applies volatility noise & backlog queues
+  use_malformations_filter: true # Applies schema corruptions & syntax errors
+
+# ==============================================================================
+# 3. N-DIMENSIONAL METRIC SPACE DEFINITIONS
+# Canonical metric space degrees of freedom (primitive values & AST derivations)
+# ==============================================================================
 metrics:
-  - name: "metric_1"                # Metric key name (used in states & outputs)
-    is_derivative: false            # True if calculated/derived from other metrics
-    primitive_type: "float"         # Target primitive type (float, int, bool)
-    formula:                        # Derivation formula required if derivative is true
-
-  - name: "metric_2"
+  - name: "transit_velocity_mph"
     is_derivative: false
     primitive_type: "float"
-    formula: 
 
-# =====================================================================
-# 3. GLOBAL CONFIGURATION TOGGLES & GLOBAL VALUES (IF APPLICABLE)
-# =====================================================================
-toggles:
-  use_global_limits: false           # If true, entities inherit global_limits unless overridden
-  use_global_behavior: true         # If true, entities inherit global_behavior_states
-  use_global_macro_shock: true      # If true, entities inherit global_macro_shocks
+  - name: "fuel_level_pct"
+    is_derivative: false
+    primitive_type: "float"
 
-# Global Bounding limits
-global_limits:
-  metric_1: [0.0, 100.0]            # Hard [min, max] limits per metric
-  metric_2: [0.0, 10.0]
+  - name: "queue_dwell_time_min"
+    is_derivative: false
+    primitive_type: "float"
 
-# Global Behavior States
-global_behavior_states:
-  - name: "STATE_ALPHA"
-    # N-Dimensional State Bounding Box [min, max] for each metric
-    state_bounds:
-      metric_1: [85.0, 100.0]
-      metric_2: [0.0, 1.0]
-    
-    # Linear drift rate per metric per epoch (vector addition: mu_t + drift)
-    drift_rates:
-      metric_1: 0.1
-      metric_2: -0.05
-    
-    # Gaussian noise volatility (std dev) per metric (M_t = mu_t + noise)
-    volatilities:
-      metric_1: 0.5
-      metric_2: 0.05
-    
-    # Sticky boundary resistance [0.0 = weak wall, 1.0 = solid wall]
-    boundary_stiffness: 0.8
+  - name: "equipment_wear_index"
+    is_derivative: false
+    primitive_type: "float"
 
-  - name: "STATE_BETA"
-    state_bounds:
-      metric_1: [0.0, 85.0]
-      metric_2: [1.0, 10.0]
-    drift_rates:
-      metric_1: -1.0
-      metric_2: 0.5
-    volatilities:
-      metric_1: 2.0
-      metric_2: 0.2
-    boundary_stiffness: 0.3
+  # Derivative metrics (parsed at runtime via AST expressions)
+  - name: "fuel_burn_rate_per_mile"
+    is_derivative: true
+    primitive_type: "float"
+    formula: "(100.0 - fuel_level_pct) / clamp(transit_velocity_mph, 1.0, 120.0)"
 
-# Global Macro Shocks ("Magic Teleports" / Black Swans)
-global_macro_shocks:
-  - name: "systemic_disruption"
-    probability_per_epoch: 0.002    # Epoch trigger probability
-    target_state: "STATE_BETA"      # Target state to force-set
-    instant_metric_overrides:       # Immediate coordinate relocation
-      metric_1: 40.0
-      metric_2: 5.0
+  - name: "operational_risk_score"
+    is_derivative: true
+    primitive_type: "float"
+    formula: "(equipment_wear_index * 0.6) + (queue_dwell_time_min * 0.4)"
 
-# =====================================================================
-# 4. ENTITY DEFINITIONS & ENTITY VALUES (IF APPLICABLE)
-# =====================================================================
+# ==============================================================================
+# 4. OR EXTENSION MODULES
+# ==============================================================================
+
+# --- 4A. NETWORK TOPOLOGY ENGINE (Spatial Graphs & Zero Teleportation) ---
+# Note either routes or adjacency_matrix must be filled depending on toggle
+network_topology:
+  routing_type: "stochastic_adjacency_walk" # Options: [stochastic_adjacency_walk, shortest_path_dijkstra]
+  network_class: "linear" # Default: Linear [future implementation may expand to hub-and-spoke]
+  nodes: ["DEPOT_NORTH", "HUB_CENTRAL", "TERMINAL_SOUTH"]
+  use_defined_routes: true
+
+  routes:
+    "DEPOT_NORTH->HUB_CENTRAL":
+      distance_miles: 120.0
+      nominal_travel_time_min: 130
+      max_throughput_capacity: 50 # Vehicles/hour
+      max_route_speed: 65 # Maximum speed in miles per hour the route can operate
+    "HUB_CENTRAL->TERMINAL_SOUTH":
+      distance_miles: 85.0
+      nominal_travel_time_min: 90
+      max_throughput_capacity: 30
+      max_route_speed: 65
+
+  adjacency_matrix:
+    DEPOT_NORTH:
+      - destination: "HUB_CENTRAL"
+        weight: 1.0
+    HUB_CENTRAL:
+      - destination: "TERMINAL_SOUTH"
+        weight: 0.7
+      - destination: "DEPOT_NORTH"
+        weight: 0.3
+    TERMINAL_SOUTH:
+      - destination: "HUB_CENTRAL"
+        weight: 1.0
+
+# --- 4B. RESOURCE CONTENTION ENGINE (Shared Bottlenecks / Capacities) ---
+resource_pools:
+  - id: "CENTRAL_UNLOADING_DOCKS"
+    total_capacity: 4 # Maximum simultaneous entities allowed access
+    queue_policy: "FIFO" # Options: [FIFO, PRIORITY_QUEUE, LIFO]
+    queue_contention_penalty_min: 15.0 # Added delay rate per queued epoch
+
+  - id: "HEAVY_LIFT_CRANE"
+    total_capacity: 1
+    queue_policy: "PRIORITY_QUEUE"
+    queue_contention_penalty_min: 45.0
+
+# --- 4C. WORKFLOW DAG ENGINE (Task Precedence & PERT/CPM Scheduling) ---
+workflow_dag:
+  tasks:
+    - task_id: "INBOUND_INSPECTION"
+      nominal_duration_min: 20
+      predecessors: []
+
+    - task_id: "UNLOAD_CARGO"
+      nominal_duration_min: 45
+      predecessors: ["INBOUND_INSPECTION"]
+      required_resource_pool: "CENTRAL_UNLOADING_DOCKS" # Ties into 4B
+
+    - task_id: "HEAVY_STAGING"
+      nominal_duration_min: 30
+      predecessors: ["UNLOAD_CARGO"]
+      required_resource_pool: "HEAVY_LIFT_CRANE"
+
+# ==============================================================================
+# 5. NOMINAL GENERATOR (Pragmatic Zero-Noise Baseline)
+# ==============================================================================
+nominal_generator:
+  baseline_metrics:
+    transit_velocity_mph: 62.0
+    fuel_level_pct: 100.0
+    queue_dwell_time_min: 0.0
+    equipment_wear_index: 0.05
+
+# ==============================================================================
+# 6. STATE ENGINE (Behavioral Regimes, Drift Vectors & Shocks)
+# ==============================================================================
+state_engine:
+  initial_state: "OPTIMAL_FLOW"
+
+  states:
+    OPTIMAL_FLOW:
+      state_bounds:
+        transit_velocity_mph: [50.0, 75.0]
+        fuel_level_pct: [20.0, 100.0]
+        queue_dwell_time_min: [0.0, 15.0]
+        equipment_wear_index: [0.0, 0.3]
+      drift_rates:
+        equipment_wear_index: 0.001
+        fuel_level_pct: -0.5
+      volatilities:
+        transit_velocity_mph: 2.0
+        fuel_level_pct: 0.1
+      boundary_stiffness: 0.85
+
+    CONGESTED_BOTTLENECK:
+      state_bounds:
+        transit_velocity_mph: [0.0, 25.0]
+        fuel_level_pct: [10.0, 100.0]
+        queue_dwell_time_min: [15.0, 120.0]
+        equipment_wear_index: [0.3, 0.7]
+      drift_rates:
+        queue_dwell_time_min: 2.5
+        equipment_wear_index: 0.008
+      volatilities:
+        transit_velocity_mph: 4.0
+        queue_dwell_time_min: 5.0
+      boundary_stiffness: 0.40
+
+    CRITICAL_BREAKDOWN:
+      state_bounds:
+        transit_velocity_mph: [0.0, 0.0]
+        fuel_level_pct: [0.0, 100.0]
+        queue_dwell_time_min: [120.0, 600.0]
+        equipment_wear_index: [0.7, 1.0]
+      drift_rates:
+        queue_dwell_time_min: 10.0
+      volatilities:
+        queue_dwell_time_min: 15.0
+      boundary_stiffness: 0.10
+
+  transition_matrix:
+    OPTIMAL_FLOW:
+      OPTIMAL_FLOW: 0.90
+      CONGESTED_BOTTLENECK: 0.10
+    CONGESTED_BOTTLENECK:
+      CONGESTED_BOTTLENECK: 0.80
+      OPTIMAL_FLOW: 0.15
+      CRITICAL_BREAKDOWN: 0.05
+    CRITICAL_BREAKDOWN:
+      CRITICAL_BREAKDOWN: 0.85
+      OPTIMAL_FLOW: 0.15 # Maintenance event / reset
+
+  macro_shocks:
+    - name: "major_highway_accident_closure"
+      probability_per_epoch: 0.005
+      target_state: "CONGESTED_BOTTLENECK"
+      instant_metric_overrides:
+        transit_velocity_mph: 0.0
+        queue_dwell_time_min: 90.0
+
+    - name: "catastrophic_engine_failure"
+      probability_per_epoch: 0.001
+      target_state: "CRITICAL_BREAKDOWN"
+      instant_metric_overrides:
+        transit_velocity_mph: 0.0
+        equipment_wear_index: 0.95
+
+# ==============================================================================
+# 7. REALISM FILTER (Backlog Queues, Volatility & Global Safeguards)
+# ==============================================================================
+realism_filter:
+  # One-way coupled backlog/deferral policy
+  deferral_policy:
+    enabled: true
+    driver_metric: "queue_dwell_time_min"
+    max_drift_ttl_epochs: 5 # Cancel task if deferred > 5 epochs
+    base_probabilities:
+      fulfillment: 0.80
+      deferral: 0.15
+      cancellation: 0.05
+    aging_rules:
+      cancel_escalation_per_epoch: 0.10
+
+  # Physical hard clamping rails across all calculations
+  global_limits:
+    transit_velocity_mph: [0.0, 120.0]
+    fuel_level_pct: [0.0, 100.0]
+    queue_dwell_time_min: [0.0, 1440.0]
+    equipment_wear_index: [0.0, 1.0]
+
+# ==============================================================================
+# 8. MALFORMATIONS FILTER (Data Corruption Stress-Testing)
+# ==============================================================================
+malformations_filter:
+  enabled: true
+  corruption_rules:
+    - type: "null_injection"
+      probability: 0.002
+      target_fields: ["transit_velocity_mph", "fuel_level_pct"]
+
+    - type: "out_of_range_spike"
+      probability: 0.001
+      target_fields: ["queue_dwell_time_min"]
+      spike_value: -999.0 # Telemetry sensor disconnect flag
+
+    - type: "string_formatting_error"
+      probability: 0.002
+      target_fields: ["telemetry_status_code"]
+      corrupted_value: "ERR_GPS_SAT_LOST_TIMEOUT"
+
+# ==============================================================================
+# 9. ENTITIES (Target System Assets)
+# ==============================================================================
 entities:
-  - id: "entity_001"
-    entity_type: "category_a"        # Optional metadata string for payload mapping
-    initial_state: "STATE_ALPHA"    # Starting state regime
-    
-    # Starting baseline coordinates (mu_0) in N-dimensional metric space
+  - id: "TRUCK_ASSET_101"
+    entity_type: "heavy_freight_hauler"
+    initial_location: "DEPOT_NORTH"
+    initial_state: "OPTIMAL_FLOW"
     initial_metrics:
-      metric_1: 95.0
-      metric_2: 0.2
+      transit_velocity_mph: 65.0
+      fuel_level_pct: 100.0
+      queue_dwell_time_min: 0.0
+      equipment_wear_index: 0.05
 
-    # ENTITY BOUNDS: Custom safety rail limits for this specific entity
-    metric_bounds:
-      metric_1: [0.0, 100.0]
-      metric_2: [0.0, 10.0]
+  - id: "TRUCK_ASSET_102"
+    entity_type: "heavy_freight_hauler"
+    initial_location: "HUB_CENTRAL"
+    initial_state: "OPTIMAL_FLOW"
+    initial_metrics:
+      transit_velocity_mph: 58.0
+      fuel_level_pct: 85.0
+      queue_dwell_time_min: 5.0
+      equipment_wear_index: 0.12
 
-    # ENTITY STATE: Entity-specific behavior states
-    # (Only parsed if toggles.use_global_behavior == false)
-    behavior_states: []
+# ==============================================================================
+# 10. FILE SINK & OUTPUT MAPPING
+# ==============================================================================
+sink:
+  format: "csv"
+  output_path: "./output/master_or_simulation_output.csv"
 
-    # ENTITY MACRO: Entity-specific macro shocks
-    # (Only parsed if toggles.use_global_macro_shock == false)
-    macro_shocks: []
+  metadata_toggles:
+    include_state: true          # Emits active state label (e.g., OPTIMAL_FLOW)
+    include_malformed_flag: true # Emits true/false if row was corrupted
+    include_true_baseline: false # Emits true mu_t coordinate vector
 
-    # -----------------------------------------------------------------
-    # BACKLOG & DEFERRAL POLICY (Queue Aging Rules)
-    # -----------------------------------------------------------------
-    deferral_policy:
-      enabled: true
-      driver_metric: "metric_1"      # The metric M_t that drives fulfillment probability
-      max_drift_ttl_epochs: 3        # Force cancellation after N deferred steps
-      
-      base_probabilities:            # These must sum to 1.0
-        fulfillment: 0.85            # Base P_fulfillment (overridden dynamically by M_t)
-        deferral: 0.10               # Base roll chance
-        cancellation: 0.05           # Base drop chance
-      
-      aging_rules:
-        cancel_escalation_per_epoch: 0.15 # Added cancel risk per rolled epoch
-
-# =====================================================================
-# 5. OUTPUT SINK & PAYLOAD SCHEMA MAPPING
-# =====================================================================
-output:
-  format: "csv"                      # Output file format ("csv", "json")
-  path: "outputs/simulation_run.csv" # Destination file path
-
-  # Payload Column Mapping (Engine attribute -> Target header)
   fields:
     - name: "timestamp"
-      source: "simulation_time"
-    - name: "entity_identifier"
-      source: "entity_id"
-    - name: "entity_category"
-      source: "entity_type"
-    - name: "primary_val"
-      source: "metrics.metric_1"     # Maps observed M_t of metric_1
-    - name: "secondary_val"
-      source: "metrics.metric_2"     # Maps observed M_t of metric_2
-    - name: "pending_backlog"
-      source: "backlog_depth"
-
-  # System Metadata Flags (Appended to payload if enabled)
-  metadata_toggles:
-    include_state: true              # Appends active state name (e.g., "STATE_ALPHA")
-    include_malformed_flag: false    # Appends boolean flag if row was corrupted
-    include_true_baseline: false     # Appends true position (mu_t) vector for debugging
+      source: "system.timestamp"
+    - name: "vehicle_id"
+      source: "entity.id"
+    - name: "operational_regime"
+      source: "system.state_label"
+    - name: "current_node"
+      source: "system.current_location"
+    - name: "speed_mph"
+      source: "metrics.transit_velocity_mph"
+    - name: "fuel_pct"
+      source: "metrics.fuel_level_pct"
+    - name: "dwell_min"
+      source: "metrics.queue_dwell_time_min"
+    - name: "burn_rate"
+      source: "derivative_metrics.fuel_burn_rate_per_mile"
+    - name: "risk_score"
+      source: "derivative_metrics.operational_risk_score"
+    - name: "backlog_depth"
+      source: "system.backlog_depth"
+    - name: "is_corrupted"
+      source: "system.is_malformed"

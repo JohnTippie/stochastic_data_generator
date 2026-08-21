@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 import yaml
 from .exceptions import ConfigNotFoundError, InvalidSchemaError
@@ -14,6 +15,10 @@ def read_yaml_file(config_path: Path | str) -> dict:
 
     try:
         logger.debug(f"Attempting to read configuration from {path}")
+        """ CWE-776 """
+        MAX_CONFIG_SIZE_BYTES = 10 * 1024 * 1024
+        if path.stat().st_size > MAX_CONFIG_SIZE_BYTES:
+            raise InvalidSchemaError("Configuration file exceeds maximum allowed size of 10 MB")
         with open(path, "r", encoding="utf-8") as f:
             raw_data = yaml.safe_load(f)
     except FileNotFoundError as e:

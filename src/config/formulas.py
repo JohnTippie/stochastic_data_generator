@@ -1,7 +1,8 @@
 import ast
-from .schemas import MetricDefinitionConfig
-from .exceptions import InvalidSchemaError
+from typing import Sequence
 
+from .schemas import MetricsConfig
+from .exceptions import InvalidSchemaError
 
 class _ASTFormulaValidator(ast.NodeVisitor):
     ALLOWED_NODES = (
@@ -12,10 +13,17 @@ class _ASTFormulaValidator(ast.NodeVisitor):
         ast.Name,
         ast.Call,
         ast.Load,
-        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod, ast.FloorDiv,
-        ast.USub, ast.UAdd,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Pow,
+        ast.Mod,
+        ast.FloorDiv,
+        ast.USub,
+        ast.UAdd,
     )
-    ALLOWED_FUNCTIONS = {"abs", "min", "max", "sqrt", "log", "exp", "pow"}
+    ALLOWED_FUNCTIONS = {"abs", "min", "max", "clamp", "sqrt", "log", "exp", "pow"}
 
     def __init__(self) -> None:
         self.variables: set[str] = set()
@@ -40,8 +48,7 @@ class _ASTFormulaValidator(ast.NodeVisitor):
         for arg in node.args:
             self.visit(arg)
 
-
-def validate_derivative_metric_formulas(metrics: tuple[MetricDefinitionConfig, ...]) -> None:
+def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> None:
     """
     Validates formula AST syntax, variable resolution, and dependency graph acyclicity.
     """
@@ -50,6 +57,10 @@ def validate_derivative_metric_formulas(metrics: tuple[MetricDefinitionConfig, .
     deps: dict[str, set[str]] = {}
 
     for d_name, d_metric in derivative_metrics.items():
+        if not d_metric.formula:
+            raise InvalidSchemaError(
+                f"Derivative metric '{d_name}' is missing an AST expression formula."
+            )
         try:
             tree = ast.parse(d_metric.formula, mode="eval")
         except SyntaxError as e:
