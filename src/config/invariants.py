@@ -54,8 +54,12 @@ def validate_domain_invariants(config: SimulationConfig) -> None:
 
 def _parse_time_string_to_seconds(time_str: str) -> int:
     unit = time_str[-1]
-    qty = int(time_str[:-1])
-    return qty * TIME_UNIT_MULTIPLIERS[unit]
+    value = float(time_str[:-1])
+    
+    if value <= 0:
+        raise InvalidSchemaError(f"Time duration '{time_str}' must be strictly greater than 0.")
+        
+    return value * TIME_UNIT_MULTIPLIERS[unit]
 
 def _check_metric_keys_exact(keys: Iterable[str], expected_names: set[str], context: str) -> None:
     keys_set = set(keys)
@@ -208,51 +212,6 @@ def _validate_topology_integrity(config: SimulationConfig) -> None:
                         f"Adjacency edge from '{origin}' references undeclared destination '{edge.destination}'."
                     )
 
-def _validate_workflow_and_resources(config: SimulationConfig) -> None:
-    declared_pools = {p.id for p in config.resource_pools} if config.resource_pools else set()
-
-    if not config.workflow_dag or not config.workflow_dag.tasks:
-        return
-
-    tasks = config.workflow_dag.tasks
-    declared_tasks = {t.task_id for t in tasks}
-
-    for task in tasks:
-        # Resource pool foreign key check
-        if task.required_resource_pool and task.required_resource_pool not in declared_pools:
-            raise InvalidSchemaError(
-                f"Task '{task.task_id}' references undeclared resource pool '{task.required_resource_pool}'."
-            )
-
-        # Predecessor existence check
-        for pred in task.predecessors:
-            if pred not in declared_tasks:
-                raise InvalidSchemaError(
-                    f"Task '{task.task_id}' references undeclared predecessor task '{pred}'."
-                )
-            if pred == task.task_id:
-                raise InvalidSchemaError(f"Task '{task.task_id}' cannot reference itself as a predecessor.")
-
-    # DAG cycle detection (DFS)
-    graph = {t.task_id: list(t.predecessors) for t in tasks}
-    visited: dict[str, int] = {}  # 0: unvisited, 1: visiting, 2: visited
-
-    def dfs(node: str, path: list[str]) -> None:
-        visited[node] = 1
-        path.append(node)
-        for pred in graph.get(node, []):
-            if visited.get(pred, 0) == 1:
-                cycle_str = " -> ".join(path[path.index(pred):] + [pred])
-                raise InvalidSchemaError(f"Circular dependency detected in workflow DAG: {cycle_str}")
-            if visited.get(pred, 0) == 0:
-                dfs(pred, path)
-        path.pop()
-        visited[node] = 2
-
-    for task_id in graph:
-        if visited.get(task_id, 0) == 0:
-            dfs(task_id, [])
-
 def _validate_state_engine_integrity(config: SimulationConfig) -> None:
     if not config.state_engine:
         return
@@ -267,14 +226,27 @@ def _validate_state_engine_integrity(config: SimulationConfig) -> None:
             f"State engine initial_state '{engine.initial_state}' does not exist in declared states."
         )
 
-    # 2. Transition matrix relational check
+    # 2. Transition matrix completeness & relational/probability checks
+    missing_rows = declared_states - set(engine.transition_matrix.keys())
+    if missing_rows:
+        raise InvalidSchemaError(
+            f"State transition matrix is incomplete; missing row definitions for state(s): {missing_rows}"
+        )
+
     for origin_state, targets in engine.transition_matrix.items():
         if origin_state not in declared_states:
-            raise InvalidSchemaError(f"Transition matrix contains undeclared origin state '{origin_state}'.")
-        for target_state in targets.keys():
+            raise InvalidSchemaError(
+                f"Transition matrix contains undeclared origin state '{origin_state}'."
+            )
+        for target_state, prob in targets.items():
             if target_state not in declared_states:
                 raise InvalidSchemaError(
                     f"Transition row for state '{origin_state}' references undeclared destination state '{target_state}'."
+                )
+            if not (0.0 <= prob <= 1.0):
+                raise InvalidSchemaError(
+                    f"Transition probability from '{origin_state}' to '{target_state}' ({prob}) "
+                    f"must lie within closed interval [0.0, 1.0]."
                 )
 
     # 3. Macro shock validation
@@ -290,7 +262,9 @@ def _validate_state_engine_integrity(config: SimulationConfig) -> None:
         )
 
         target_state_cfg = engine.states[shock.target_state]
-        global_limits = config.realism_filter.global_limits if config.realism_filter else None
+        global_limits = (
+            config.realism_filter.global_limits if config.realism_filter else None
+        )
 
         for m_name, val in shock.instant_metric_overrides.items():
             if global_limits and m_name in global_limits:
@@ -307,6 +281,71 @@ def _validate_state_engine_integrity(config: SimulationConfig) -> None:
                         f"Macro shock '{shock.name}' override for metric '{m_name}' ({val}) "
                         f"violates target state '{shock.target_state}' bounds [{min_b}, {max_b}]."
                     )
+
+
+def _validate_workflow_and_resources(config: SimulationConfig) -> None:
+    # 1. Resource pool uniqueness & foreign key mapping
+    declared_pools: set[str] = set()
+    if config.resource_pools:
+        for pool in config.resource_pools:
+            if pool.id in declared_pools:
+                raise InvalidSchemaError(
+                    f"Duplicate resource pool ID '{pool.id}' detected."
+                )
+            declared_pools.add(pool.id)
+
+    if not config.workflow_dag or not config.workflow_dag.tasks:
+        return
+
+    tasks = config.workflow_dag.tasks
+
+    # 2. Task ID uniqueness check
+    declared_tasks: set[str] = set()
+    for task in tasks:
+        if task.task_id in declared_tasks:
+            raise InvalidSchemaError(
+                f"Duplicate task ID '{task.task_id}' detected in workflow DAG."
+            )
+        declared_tasks.add(task.task_id)
+
+    # 3. Task relational validation (resource pools, predecessors, self-references)
+    for task in tasks:
+        if task.required_resource_pool and task.required_resource_pool not in declared_pools:
+            raise InvalidSchemaError(
+                f"Task '{task.task_id}' references undeclared resource pool '{task.required_resource_pool}'."
+            )
+
+        for pred in task.predecessors:
+            if pred not in declared_tasks:
+                raise InvalidSchemaError(
+                    f"Task '{task.task_id}' references undeclared predecessor task '{pred}'."
+                )
+            if pred == task.task_id:
+                raise InvalidSchemaError(
+                    f"Task '{task.task_id}' cannot reference itself as a predecessor."
+                )
+
+    # 4. DAG cycle detection (DFS)
+    graph = {t.task_id: list(t.predecessors) for t in tasks}
+    visited: dict[str, int] = {}  # 0: unvisited, 1: visiting, 2: visited
+
+    def dfs(node: str, path: list[str]) -> None:
+        visited[node] = 1
+        path.append(node)
+        for pred in graph.get(node, []):
+            if visited.get(pred, 0) == 1:
+                cycle_str = " -> ".join(path[path.index(pred):] + [pred])
+                raise InvalidSchemaError(
+                    f"Circular dependency detected in workflow DAG: {cycle_str}"
+                )
+            if visited.get(pred, 0) == 0:
+                dfs(pred, path)
+        path.pop()
+        visited[node] = 2
+
+    for task_id in graph:
+        if visited.get(task_id, 0) == 0:
+            dfs(task_id, [])
 
 def _validate_initial_coordinates(config: SimulationConfig) -> None:
     declared_nodes = set(config.network_topology.nodes) if config.network_topology else set()

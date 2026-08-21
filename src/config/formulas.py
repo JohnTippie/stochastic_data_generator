@@ -47,6 +47,8 @@ class _ASTFormulaValidator(ast.NodeVisitor):
             )
         for arg in node.args:
             self.visit(arg)
+        for kw in node.keywords:
+            self.visit(kw.value)
 
 def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> None:
     """

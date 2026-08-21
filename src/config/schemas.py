@@ -80,7 +80,7 @@ def _validate_iso8601_timestamp(v: str) -> str:
         raise ValueError(f"Invalid ISO-8601 timestamp '{v}': {e}") from e
     return v
 
-def _validate_numpy_seed(v: str | int) -> str | int:
+def _validate_numpy_seed(v: int) -> int:
     try:
         val = int(v)
         if val < 0:
