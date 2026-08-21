@@ -6,7 +6,7 @@
 
 ### 1.1 Purpose
 
-This module is responsible for parsing external YAML configuration files and constructing an immutable, deeply validated in-memory object graph (`SimulationConfig`) for the engine. It performs fail-fast structural and semantic validation (e.g., asserting initial metric coordinates $\mu_0$ lie inside starting state bounds and verifying metric key alignment across N-dimensions). It executes no simulation logic and performs no dynamic defaults interpolation beyond declared schema fallbacks.
+This module is responsible for reading external YAML configuration files and constructing an immutable, deeply validated in-memory object graph (`SimulationConfig`) for the execution pipeline. Ingest occurs via a two-phase architecture: Phase 1 enforces structural typing and model constraints via Pydantic v2 schemas; Phase 2 enforces cross-field domain invariants, topological integrity, AST formula expression validation, and security containment. It executes zero simulation logic.
 
 ### 1.2 Inputs
 
@@ -20,85 +20,49 @@ This module is responsible for parsing external YAML configuration files and con
 
 ### 1.4 Invariants
 
-1. **Immutability:** The returned `SimulationConfig` root model and all child objects must be strictly immutable (`frozen = True`)
+1. **Immutability:** The returned `SimulationConfig` root model and all child sub-objects must be strictly immutable (`frozen = True` and `FrozenDict` / `MappingProxyType` attributes)
 
-2. **Metric Dimension Consistency:** Every metric key referenced inside `global_limits`, `state_bounds`, `drift_rates`, `volatilities`, and `initial_metrics` must match the manifest defined under top-level `metrics`.
+2. **Metric Dimension Consistency:** Every metric key referenced across state bounds, drift vectors, volatilities, baseline metrics, initial entity metrics, and deferral drivers must strictly map to declared degrees of freedom in `metrics`.
 
-3. **Initial Coordinate Validity:** An entity's declared `initial_metrics` ($\mu_0$) must lie within the N-dimensional `state_bounds` of its declared `initial_state` and within its global or entity-specific `metric_bounds`.
+3. **Initial Coordinate Validity:** An entity's declared `initial_metrics` ($\mu_0$) must lie within the *N*-dimensional `state_bounds` of its declared `initial_state` and within top level `global_limits`.
 
 4. **Probability Clamping:** All probability fields (`probability_per_epoch`, `fulfillment`, `deferral`, `cancellation`) and `boundary_stiffness` values must lie within the closed invterval [0.0,1.0].
 
 5. **Time String ISO Format:** `duration`, `data_resolution`, and `epoch_interval` strings must conform to the quantity-unit regex `^\d+[s|m|h|d|w]$`.
 
+6. **Time Hierarchy Enforcement:** Configured durations must satisfy the strict inequality sequence: $\text{data_resolution}\leq\text{epoch_interval}\leq\text{duration}$.
+
+7. **Graph & DAG Acyclicity:** Workflows declared in `workflow_dag` and derivative metirc dependency chains in `metrics` must form directed acyclic graphs (DAGs), validated via Depth-First Search (DFS).
+
+8. **Topology & Resource Mapping:** All network route endpoints in `network_topology` must exist within declared `nodes`, and all task resource requests in `workflow_dag` must target declared `resource_pools`.
+
+9. **Security Containment & Capping:** Input YAML file size must not exceed 10MB (CWE-776). Output sink paths must resolve via `Path.resolve()` cleanly inside the active workspace or temp directory, explicitly rejecting path traversal attempts into restricted system directories (`/etc`, `/usr`, `C:\Windows`)(CWE-22).
+
 ### 1.5 Design Decisions
+
+* **4-Tier Modular Decomposition:** Separates ingestion into `io.py` (file operations & size bounds), `schemas.py` (Pydantic v2 schemas), `invariants.py` (relational domain checks), `formulas.py` (AST formula parsing), `exceptions.py` (domain errors), and `reader.py` (orchestration layer).
+
+* **Custom `FrozenDict` Schema Core:** Implements `__get_pydantic_core_schema__` on `MappingProxyType` to enforce immutable dictionary attributes without triggering Pydantic serialization warnings.
+
+* **AST Formula Whitelisting:** Uses Python's `ast.NodeVisitor` to parse derivative expressions into an abstract syntax tree, enforcing strict node and function whitelists (`abs`, `min`, `max`, `clamp`, `sqrt`, `log`, `exp`, `pow`) while stripping `__builtins__`.
 
 * **Pydantic V2 `BaseModel` with `frozen=True`:** Adopted to handle parsing, strict type validation, custom field validators, and zero-boilerplate immutability natively.
 
 * **Fail-Fast Cross-Field Validation:** Validating N-dimensional key alignment and initial coordinate bounds during parsing prevents silent runtime failures deep into step $t = 1000$.
 
-* **Path-Based File Ingestion:** Using Python's `pathlib.Path` ensures cross-platform path resolution (POSIX/Windows).
+* **Canonical Path Resolution:** Uses `Path.resolve()` prior to directory containment checks to resolve symlinks and `..` segments before validating write permissions.
 
 ### 1.6 Data Structures
 
-Configs and data structures will be frozen and immutable. These are documented in the schemas.py file.
+* Config models are organized across four schema tiers in `schemas.py`:
 
-### 1.7 Function Signatures
+  * **Tier 1 (Primitives & Types):** `FrozenDict`, `ISO8601Duration`, `MetricType`, `RoutingType`.
 
-```python
-# Custom Exception Hierarchy for Config Ingestion
-class ConfigError(Exception):
-    """Base exception for all configuration ingestion failures."""
-    pass
+  * **Tier 2 (Leaf Component Models):** `MetricsConfig`, `EntityConfig`, `TaskConfig`, `MacroShockConfig`, `SinkFieldConfig`.
 
-class ConfigNotFoundError(ConfigError):
-    """Raised when the target YAML file does not exist on disk."""
-    pass
+  * **Tier 3 (Section Container Models):** `MetaConfig`, `SimulationParamsConfig`, `StateEngineConfig`, `NetworkTopologyConfig`, `SinkConfig`.
 
-class InvalidSchemaError(ConfigError):
-    """Raised when YAML structure fails Pydantic type validation."""
-    pass
-
-class DimensionalMismatchError(ConfigError):
-    """Raised when state bounds/drift rates do not match defined metric keys."""
-    pass
-
-class InitialBoundsError(ConfigError):
-    """Raised when an entity's initial_metrics lie outside its state or metric bounds."""
-    pass
-
-
-class ConfigReader:
-    """Reads, validates, and constructs immutable SimulationConfig instances."""
-
-    @classmethod
-    def load_config(cls, config_path: Path | str) -> SimulationConfig:
-        """
-        Parses a YAML configuration file into a frozen SimulationConfig object hierarchy.
-
-        Args:
-            config_path: Path to the target YAML configuration file.
-
-        Returns:
-            SimulationConfig: Immutable, fully validated configuration object graph.
-
-        Raises:
-            ConfigNotFoundError: If file path is invalid or unreadable.
-            InvalidSchemaError: If YAML fails Pydantic schema verification.
-            DimensionalMismatchError: If metric keys across states/metrics disagree.
-            InitialBoundsError: If initial entity coordinates lie outside bounding boxes.
-        """
-        ...
-
-    @classmethod
-    def _validate_dimensional_alignment(cls, config: SimulationConfig) -> None:
-        """Private validator: Ensures all state metric keys exist in the metrics manifest."""
-        ...
-
-    @classmethod
-    def _validate_initial_coordinates(cls, config: SimulationConfig) -> None:
-        """Private validator: Ensures mu_0 lies inside initial_state bounds for all entities."""
-        ...
-```
+  * **Tier 4 (Root Contract):** `SimulationConfig` (aggregates all section models with `extra='forbid'`).
 
 ---
 
@@ -116,8 +80,6 @@ class ConfigReader:
 
 ### 2.6 Data Structures
 
-### 2.7 Function Signatures
-
 ---
 
 ## 3.0 State Engine
@@ -133,8 +95,6 @@ class ConfigReader:
 ### 3.5 Design Decisions
 
 ### 3.6 Data Structures
-
-### 3.7 Function Signatures
 
 ---
 
@@ -152,8 +112,6 @@ class ConfigReader:
 
 ### 4.6 Data Structures
 
-### 4.7 Function Signatures
-
 ---
 
 ## 5.0 Malformations Filter
@@ -170,8 +128,6 @@ class ConfigReader:
 
 ### 5.6 Data Structures
 
-### 5.7 Function Signatures
-
 ---
 
 ## 6.0 File Sink
@@ -187,5 +143,3 @@ class ConfigReader:
 ### 6.5 Design Decisions
 
 ### 6.6 Data Structures
-
-### 6.7 Function Signatures
