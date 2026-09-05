@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 from custom_utils.formatted_logger import create_logger, update_logger_level
 from src.config import ConfigReader, ConfigError, SimulationConfig
+from src.simulation.orchestrator import run_simulation
 
 
 def main() -> int:
@@ -28,32 +29,16 @@ def main() -> int:
         config: SimulationConfig = ConfigReader.load_config(config_path)
         logger.info(f"Configuration validated successfully. "
                     f"Run seed: '{config.meta.seed}', Entities: {len(config.entities)}")
+
+        run_simulation(config)
+        logger.info("Simulation completed successfully.")
     except ConfigError as e:
         logger.error(f"Configuration ingestion failed: {e}")
-        raise ConfigError(f"Configuration error encountered: {e}") from e
+        sys.exit(1)
     except Exception as e:
-        logger.critical(f"Unexpected error occured during configuration startup: {e}")
-        raise ConfigError(f"Unknown error encountered: {e}") from e
+        logger.critical(f"Unexpected runtime error in simulation execution loop: {e}")
+        sys.exit(2)
 
-    # ====================================
-    # Nominal Generator
-    # ====================================
-
-    # ====================================
-    # State Engine
-    # ====================================
-
-    # ====================================
-    # Realism Filter
-    # ====================================
-
-    # ====================================
-    # Malformations Filter
-    # ====================================
-
-    # ====================================
-    # File Sink
-    # ====================================
     
 
 if __name__ == "__main__":

@@ -18,77 +18,71 @@ The intent behind this program is to solve a known problem in the data design se
 
 ### 2.1 Overview
 
-The intial program will be a configurable .yaml file which then can be executed upon by the program. The program will make multiple passes over the data starting from perfectly optimal and ending with messy and "real". A high level overview of these multiple passes will look like the below figure.
+The intial program will be a configurable .yaml file which then can be executed upon by the program. The core program operates as a deterministic, discrete-time event simulation driven by a central Simulation Orchestrator. Instead of generating full datasets in memory across batch passes, the ssytem evaluates time step-by-step (t->t+dt) using an O(1) memory footprint tick loop
 
 ```mermaid
 flowchart TD
-    A[Config Reader] --> B[Nominal Generator]
-    B --> C[State Engine]
-    C --> D[Realism Filter]
-    D --> E[Malformations Filter]
-    E --> F[File Sink]
+    Config[Config Reader Engine] -->|SimulationConfig| Orchestrator[Simulation Orchestrator]
+    
+    subgraph TickLoop ["Discrete Time Loop (t -> t + dt)"]
+        direction TB
+        Orchestrator -->|1. Step Request| NomGen[Nominal Generator Module]
+        NomGen -->|Target Baseline mu_nominal| StateEng[State Engine Module]
+        StateEng -->|True State & Position mu_true| Realism[Realism Filter Module]
+        Realism -->|Observed Metric M_t| Malform[Malformations Filter Module]
+        Malform -->|Corrupted/Final Row| Sink[File Sink Streamer]
+    end
+    
+    Sink -->|Disk Flush| File[CSV / JSON Output]
+    Orchestrator -->|Check t >= T| Terminate[Simulation Complete]
 ```
 
 During this step the high level data responsibilies are as follows:
 
-* Nominal Generator -> Generates an ideal "Pragmatic Baseline" (e.g., 50 scheduled loads at t=10). Zero state awareness, zero noise.
-
-* State Engine -> Computes TRUE underlying state ($S_t$) and TRUE metric position ($\mu_t$). Calculates macro-drift and boundary checks.
-
-* Realism Filter -> Combines nominal baseline + state engine outputs:
-  * Applies volatility noise: Observed Metric $M_t = \mu_t$ + Noise
-  * Executes deferral queue: Uses $M_t$ to roll/cancel events.
-
-* Malformations -> Schema & syntax corruption (nulls, string typos, etc.).
+| **Module**              | **Execution Responsibility**                                                                                                                                        | **State Mutabilitiy**     |
+|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------|
+| Simulation Orchestrator | Maintains active simulation clock (t), entity state registry, and route/DAG progression. Toggles disabled modules based on configuration flags.                    | System State Authority    |
+| Nominal Generator       | Calculates target uncorrupted metric baseline ($\mu_{t\text{,nominal}}$) and ideal kinematic progress for tick t. Has zero awareness of operational shocks or noise | Pure / Stateless Function |
+| State Engine            | Applies regime drift, evaluates macro shocks ($\mu_{t\text{,true}}$), and resolves boundary walls to calculate true position and macro state ($S_t$).               | Pure State Transformer    |
+| Realism Filter          | Injects volatility noise ($\mathcal{N}(0,\sigma^2)$) into $\mu_{t\text{,true}} to produce $M_{t\text{,observed}}$ and process backlog/deferral queues.              | Pure Transformer          |
+| Malformations Filter    | Evaluates per-field corruption rules (null injection, formatting errors, out-of-bounds spikes) on $M_{t\text{,observed}}$.                                          | Pure Transformer          |
+| File Sink Streamer      | Formats transformed row payload according to `sink.fields` and appends directly to active disk buffer.                                                              | Append-Only Stream        |
 
 ```mermaid
 stateDiagram-v2
     [*] --> INITIALIZING
 
     state INITIALIZING {
-        [*] --> ParseYAML
-        ParseYAML --> ValidateStructure : Pydantic v2 Scehmas
-        ValidateSchema --> DomainInvariants : Custom Invariants & AST Formulas
-        DomainInvariants --> InitializeEntities
-        InitializeEntities --> SeedRNG
+        [*] --> LoadConfig
+        LoadConfig --> BuildEntityRegistry
+        BuildEntityRegistry --> SeedRNGStreams
     }
 
-    INITIALIZING --> RUNNING_SIMULATION : Config Valid
-    INITIALIZING --> ERROR_EXIT : Config/Schema Failure
+    INITIALIZING --> TICK_LOOP : Registry & Config Ready
+    INITIALIZING --> ERROR_EXIT : Invariant/Config Failure
 
-    state RUNNING_SIMULATION {
-        [*] --> GenerateNominalBatch
+    state TICK_LOOP {
+        [*] --> FetchEntityContext
+        FetchEntityContext --> RunNominalStep
+        RunNominalStep --> EvaluateStateEngine
+        EvaluateStateEngine --> ApplyRealism
+        ApplyRealism --> ApplyMalformations
+        ApplyMalformations --> StreamToSink
+        StreamToSink --> IncrementTime : t = t + dt
         
-        state Nominal_Pass {
-            GenerateNominalBatch --> OutputPragmaticBaseline
-        }
-
-        state Epoch_State_Engine {
-            OutputPragmaticBaseline --> EvaluateMacroShocks : Epoch Boundary Cross
-            EvaluateMacroShocks --> Calculate2DDrift
-            Calculate2DDrift --> ResolveStickyBoundaries
-        }
-
-        state Realism_and_Corruption_Pipeline {
-            ResolveStickyBoundaries --> ApplyRealismFilter : Pass (Nominal + State M_t)
-            ApplyRealismFilter --> ProcessBacklogQueue
-            ProcessBacklogQueue --> ApplyMalformationFilter
-        }
-
-        Realism_and_Corruption_Pipeline --> WriteToSink
-        WriteToSink --> GenerateNominalBatch : Increment Time Step (t < T)
+        IncrementTime --> FetchEntityContext : t < T
     }
 
-    RUNNING_SIMULATION --> TERMINATING : Simulation Complete (t >= T)
-    RUNNING_SIMULATION --> ERROR_EXIT : Runtime Exception
+    TICK_LOOP --> TERMINATING : t >= T
+    TICK_LOOP --> ERROR_EXIT : Exception
 
     state TERMINATING {
-        [*] --> FlushBuffers
-        FlushBuffers --> WriteLogSummary
-        WriteLogSummary --> [*]
+        [*] --> FlushDiskBuffers
+        FlushDiskBuffers --> CloseHandles
     }
 
     ERROR_EXIT --> [*]
+    TERMINATING --> [*]
 ```
 
 ### 2.2 Functional Requirements

@@ -4,7 +4,7 @@
 meta:
   scenario_name: "comprehensive_or_master_simulation"
   description: "Unified master blueprint covering spatial graphs, shared resources, task DAGs, state regimes, and real-world data corruption."
-  seed: 42 # Master PRNG seed for deterministic execution
+  seed: 42 # Answer to the Ultimate Question of Life, the Universe, and Everything
 
 simulation:
   start_time: "2026-09-01T00:00:00Z" # ISO-8601 start timestamp

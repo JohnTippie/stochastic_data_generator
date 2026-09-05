@@ -70,13 +70,56 @@ This module is responsible for reading external YAML configuration files and con
 
 ### 2.1 Purpose
 
+Calculates determininistic, ideal-world targe state vector ($\mu_{\text{t,nominal}}$) for a target entity over the time step $t\to t + dt$. It establishes an uncorrupted operational baseline, assuming maximum velocity, zero dwell time, zero contention, and 100% efficiency, and is evaluated directly from the entity's active physical position in `EntityContext`. It serves as the foundational pass in the single-tick pipeline, providing the pure target baseline that downstream modules subsequently transform.
+
 ### 2.2 Inputs
+
+* `entity_context` (`EntityContext`): Active state context for the entity at time $t$, containing current topological node/route, active DAG task ID, elapsed task duration and current metric state.
+
+* `current_time` (`datetime`): Active simulation clock timestamp t.
+
+* `dt` (`timedelta`): Time step resolution increment ($dt=t_{\text{next}}-t$).
+
+* `config` (`SimulationConfig`): Master immutable configuration object containing global baseline metrics, entity overrides, topology specs, workflow DAGs, and metric declarations.
 
 ### 2.3 Outputs
 
+* `NominalStateVector`: Immutable state dataclass containing:
+
+  * `timestamp` (`str`): ISO-8601 formatted string for current time $t$.
+
+  * `entity_id` (`str`): Unique identifier of the evaluated entity.
+
+  * `current_node` (`str`): Active spatial node or topology location label at time $t$.
+
+  * `metrics` (`dict[str, float]`): Dictionary of primitive uncorrupted metric baseline values for step $t$.
+
+  * `derivative_metrics` (`dict[str, float]`): Dictionary of derived metrics evaluated via AST formulas on primitive nominal values
+
 ### 2.4 Invariants
 
+* **Zero Noise and Friction Guarantee:** Noise standard deviation ($\sigma$), random pertubations, and macro operational shocks are strictly 0.0.
+
+* **Infinite Resource Capacity:** Bypasses resource pool capacity constraints (`total_capacity`); queue dwell metrics (`queue_dwell_time_min`) are strictly forced to 0.0.
+
+* **Metric Completeness Invariant:** The emitted `metrics` dictionary must contain 100% of all non-derivative primitive metric keys declared in `config.metrics`.
+
+* **State Continuity:** Kinematic and task progress are evaluated relative to the entity's actual physical position at time $t$ (form `EntityContext`), preventing physical desynchronization between nominal intent and actual actions.
+
+* **Kinematic Speed Constraint:** Transit velocity cannot exceed `max_route_speed` or global upper velocity bounds.
+
 ### 2.5 Design Decisions
+* **Context-Anchored Evaluation (O(1) Memory):** Instead of pre-computing multi-day time series or running parallel "ghost" schedules, the nominal generator calculates step progress from the entitiy's active context at $t$. If an entity was blocked in step $t-dt$, the generator evaluates ideal movement forward from that blocked position for step $t$.
+
+* **Strict Metric Resolution Hierarchy:** Primitive metric defaults are resolved using an all-or-nothing approach per entity:
+
+  * If `entities[i].initial_metrics` is defined, all primitive metrics are read from this map.
+
+  * Otherwise, all primitive metrics fallback to `nominal_generator.baseline_metrics`.
+
+  * Partial key merging across entity and global baseline dictionaries is prohibited.
+
+* **Inline AST Formula Resolution:** Derived metrics are computed dynamically at each tick by passing the nominal primitive values into `formulas.py`, ensuring AST evaluations reflect the ideal baseline conditions.
 
 ### 2.6 Data Structures
 

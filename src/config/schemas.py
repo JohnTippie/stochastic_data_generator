@@ -82,13 +82,12 @@ def _validate_iso8601_timestamp(v: str) -> str:
 
 def _validate_numpy_seed(v: int) -> int:
     try:
-        val = int(v)
-        if val < 0:
+        if v < 0:
             raise ValueError("Seed must be a non-negative integer.")
-        np.random.SeedSequence(val)
+        np.random.SeedSequence(v)
     except (ValueError, TypeError) as e:
         raise ValueError(
-            f"Invalid seed '{v}': must be convertible to a non-negative integer for NumPy SeedSequence."
+            f"Invalid seed '{v}': Rejected by NumPy SeedSequence."
         ) from e
     return v
 
@@ -105,7 +104,7 @@ SanitizedString = Annotated[str, AfterValidator(_validate_sanitized_identifier)]
 BoundTuple = Annotated[tuple[float, float], AfterValidator(_validate_bounds_range)]
 FrozenDict = Annotated[MappingProxyType[K, V], _FrozenDictAnnotation]
 ISO8601Timestamp = Annotated[str, AfterValidator(_validate_iso8601_timestamp)]
-SeedPayload = Annotated[str | int, AfterValidator(_validate_numpy_seed)]
+SeedPayload = Annotated[int, AfterValidator(_validate_numpy_seed)]
 
 class FrozenConfigModel(BaseModel):
     """Base model enforcing strict immutability across all configuration structs."""
