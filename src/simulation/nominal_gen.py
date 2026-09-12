@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
-from src.config.formulas import SafeFormulaEvaluator
+from src.config.formulas import SafeFormulaEvaluator, validate_derivative_metric_formulas
 
 # ====================================
 # DATA STRUCTURES
@@ -45,6 +45,9 @@ class NominalGenerator:
     def __init__(self, config: Any):
         self.config = config
         self._entity_baselines: Dict[str, Dict[str,float]] = self._resolve_baselines()
+        self._sorted_derivative_metrics = [
+            m for m in validate_derivative_metric_formulas(self.config.metrics)
+        ]
 
     def evaluate_step(
         self, 
@@ -153,10 +156,13 @@ class NominalGenerator:
     def _evaluate_derivative_metrics(self, primitive_metrics: Dict[str, float]) -> Dict[str, float]:
         """Calculates derived metrics using AST expression engine."""
         derived_results: Dict[str, float] = {}
-        evaluator = SafeFormulaEvaluator(primitive_metrics)
+        eval_scope = primitive_metrics.copy()
+        evaluator = SafeFormulaEvaluator(eval_scope)
 
-        for metric_def in self.config.metrics:
-            if metric_def.is_derivative and metric_def.formula:
-                derived_results[metric_def.name] = evaluator.evaluate(metric_def.formula)
+        for metric_def in self._sorted_derivative_metrics:
+            if metric_def.formula:
+                val = evaluator.evaluate(metric_def.formula)
+                derived_results[metric_def.name] = val
+                eval_scope[metric_def.name] = val
 
         return derived_results

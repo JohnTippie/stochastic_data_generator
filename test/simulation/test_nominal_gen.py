@@ -145,6 +145,33 @@ def test_ast_evaluator_division_by_zero_safety():
     with pytest.raises(ZeroDivisionError):
         evaluator.evaluate("x // zero")
 
+def test_cascaded_derivative_metric_dependencies(mock_config: MockConfig):
+    # Declare out of order: acceleration depends on velocity_delta, which depends on velocity
+    mock_config.metrics = [
+        MockMetricDef(name="velocity", is_derivative=False),
+        MockMetricDef(
+            name="acceleration",
+            is_derivative=True,
+            formula="velocity_delta / 2.0"
+        ),
+        MockMetricDef(
+            name="velocity_delta",
+            is_derivative=True,
+            formula="velocity - 10.0"
+        ),
+    ]
+    mock_config.entities[0].initial_metrics = {"velocity": 50.0}
+
+    generator = NominalGenerator(mock_config)
+    ctx = EntityContext(entity_id="ENTITY_DEFAULT", entity_type="truck", current_node="DEPOT_A")
+    
+    result = generator.evaluate_step(ctx, datetime(2026, 9, 1), timedelta(minutes=1))
+
+    # velocity_delta = 50.0 - 10.0 = 40.0
+    # acceleration = 40.0 / 2.0 = 20.0
+    assert result.derivative_metrics["velocity_delta"] == 40.0
+    assert result.derivative_metrics["acceleration"] == 20.0
+
 # ==============================================================================
 # BASELINE RESOLUTION TESTS
 # ==============================================================================

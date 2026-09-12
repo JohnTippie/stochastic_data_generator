@@ -146,9 +146,10 @@ class _ASTFormulaValidator(ast.NodeVisitor):
         for kw in node.keywords:
             self.visit(kw.value)
 
-def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> None:
+def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> list[MetricsConfig]:
     """
     Validates formula AST syntax, variable resolution, and dependency graph acyclicity.
+    Returns derivative metrics in topologically sorted evaluation order.
     """
     all_metric_names = {m.name for m in metrics}
     derivative_metrics = {m.name: m for m in metrics if m.is_derivative}
@@ -169,7 +170,7 @@ def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> Non
         validator = _ASTFormulaValidator()
         validator.visit(tree)
 
-        used_vars = {v for v in validator.variables if v not in _ASTFormulaValidator.ALLOWED_FUNCTIONS}
+        used_vars = {v for v in validator.variables if v not in ALLOWED_FUNCTIONS}
         for var in used_vars:
             if var not in all_metric_names:
                 raise InvalidSchemaError(
@@ -180,6 +181,7 @@ def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> Non
 
     visited: set[str] = set()
     rec_stack: set[str] = set()
+    topo_order: list[str] = []
 
     def _dfs_cycle_check(node: str, path: list[str]) -> None:
         visited.add(node)
@@ -198,7 +200,10 @@ def validate_derivative_metric_formulas(metrics: Sequence[MetricsConfig]) -> Non
 
         rec_stack.remove(node)
         path.pop()
+        topo_order.append(node)  # Post-order placement guarantees dependencies precede dependents
 
     for d_metric_name in derivative_metrics:
         if d_metric_name not in visited:
             _dfs_cycle_check(d_metric_name, [])
+
+    return [derivative_metrics[name] for name in topo_order]
