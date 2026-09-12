@@ -36,7 +36,7 @@ def build_entity_registry(config: SimulationConfig) -> dict[str, EntityContext]:
             matching_routes = [r for r in routes if r.startswith(prefix)]
             if len(matching_routes) > 1:
                 logger.warning(
-                    f"Multiple candidate routes from '{initial_loc}' for entity '{entity_id}. "
+                    f"Multiple candidate routes from '{initial_loc}' for entity '{entity_id}'. "
                     f"Selecting '{matching_routes[0]}'." 
                 )
             active_route = matching_routes[0] if matching_routes else None

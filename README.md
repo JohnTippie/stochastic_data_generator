@@ -50,7 +50,7 @@ This is an active work in progress. Build status by module:
 | **Module**              | **Is Built** | **Is Tested** | **Status Notes**                                                                                               |
 |-------------------------|--------------|---------------|----------------------------------------------------------------------------------------------------------------|
 | Config Reader           | True         | True          | Two-phase validation, AST formula whitelisting, immutability enforcement                                       |
-| Simulation Orchestrator | Partial      | False         | Functional as the tick-loop driver, but only nominal generator plugged into functionality                      |
+| Simulation Orchestrator | Partial      | Partial         | Functional as the tick-loop driver, but only nominal generator plugged into functionality                      |
 | Nominal Generator       | True         | True          | Initital test suite in place, need refactoring and securing of code and deeper testing before marking complete |
 | State Engine            | False        | False         | Not yet implemented                                                                                            |
 | Realism Filter          | False        | False         | Not yet implemented                                                                                            |
