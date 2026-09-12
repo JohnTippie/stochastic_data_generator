@@ -1,8 +1,7 @@
-import ast
-import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+from src.config.formulas import SafeFormulaEvaluator
 
 # ====================================
 # DATA STRUCTURES
@@ -28,87 +27,11 @@ class EntityContext:
     entity_type: str
     current_node: str
     active_route: Optional[str] = None
-    route_distance_covered: Optional[float] = None
+    route_distance_covered: Optional[float] = 0.0
     active_task_id: Optional[str] = None
     task_elapsed_min: float = 0.0
     is_blocked: bool = False
     current_metrics: Dict[str, float] = field(default_factory=dict)
-
-# ====================================
-# AST EVALUATOR
-# ====================================
-class SafeFormulaEvaluator(ast.NodeVisitor):
-    """
-    Evaluate sanitized AST expressions
-    """
-
-    ALLOWED_FUNCTIONS = {
-        "abs": abs,
-        "min": min,
-        "max": max,
-        "sqrt": math.sqrt,
-        "log": math.log,
-        "exp": math.exp,
-        "pow": pow,
-        "clamp": lambda val, low, high: max(low, min(val, high)),
-    }
-
-    def __init__(self, variables: Dict[str, float]):
-        self.variables = variables
-
-    def evaluate(self, expression: str) -> float:
-        parsed_ast = ast.parse(expression, mode="eval")
-        return float(self.visit(parsed_ast.body))
-
-    def visit_Num(self, node: ast.Num) -> float:
-        return float(node.n)
-
-    def visit_Constant(self, node: ast.Constant) -> float:
-        if isinstance(node.value, (int, float)):
-            return float(node.value)
-        raise ValueError(f"Unsupported constant type: {type(node.value)}")
-
-    def visit_Name(self, node: ast.Name) -> float:
-        if node.id in self.variables:
-            return float(self.variables[node.id])
-        raise ValueError(f"Undeclared metric variable in AST evaluation: '{node.id}'")
-
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> float:
-        operand = self.vist(node.operand)
-        if isinstance(node.op, ast.USub):
-            return -operand
-        if isinstance(node.op, ast.UAdd):
-            return +operand
-        raise ValueError(f"Unsupported unary operator: {type(node.op)}")
-
-    def visit_BinOp(self, node: ast.BinOp) -> float:
-        left = self.visit(node.left)
-        right = self.visit(node.right)
-
-        if isinstance(node.op, ast.Add):
-            return left + right
-        if isinstance(node.op, ast.Sub):
-            return left - right
-        if isinstance(node.op, ast.Mult):
-            return left * right
-        if isinstance(node.op, ast.Div):
-            return left / right if right != 0.0 else 0.0
-        if isinstance(node.op, ast.Pow):
-            return left ** right
-        if isinstance(node.op, ast.Mod):
-            return left % right
-        raise ValueError(f"Unsupported binary operator: {type(node.op)}")
-
-    def visit_Call(self, node: ast.Call) -> float:
-        if not isinstance(node.func, ast.Name) or node.func.id not in self.ALLOWED_FUNCTIONS:
-            raise ValueError(f"Disallowed or unknown function call in AST: '{getattr(node.func, 'id', None)}'")
-
-        args = [self.visit(arg) for arg in node.args]
-        func = self.ALLOWED_FUNCTIONS[node.func.id]
-        return float(func(*args))
-
-    def generic_visit(self, node: ast.AST):
-        raise ValueError(f"Disallowed AST expression syntax: {type(node).__name__}")
 
 # ====================================
 # NOMINAL GENERATOR ENGINE
@@ -141,11 +64,11 @@ class NominalGenerator:
 
         # 2. Ideal Topology Kinematics
         current_node = entity_context.current_node
-        if getattr(self.config.pipeline_toggles, "use_network_topology", False):
+        if self.config.pipeline_toggles.use_network_topology:
             current_node = self._evaluate_ideal_kinematics(entity_context, dt, primitive_metrics)
 
         # 3. Ideal Workflow DAG Progress
-        if getattr(self.config.pipeline_toggles, "use_workflow_dag", False):
+        if self.config.pipeline_toggles.use_workflow_dag:
             self._evaluate_ideal_dag_progress(entity_context, dt)
 
         # 4. AST Derivative Metric Evaluation
@@ -163,24 +86,11 @@ class NominalGenerator:
     def _resolve_baselines(self) -> Dict[str, Dict[str, float]]:
         """Pre-evaluates baseline metric overrides per entity at startup."""
         resolved: Dict[str, Dict[str, float]] = {}
+        global_baseline = self.config.nominal_generator.baseline_metrics
         
-        # Read global fallback
-        global_baseline = getattr(self.config.nominal_generator, "baseline_metrics", {})
-        if hasattr(global_baseline, "model_dump"):
-            global_baseline = global_baseline.model_dump()
-
-        # Map entities
-        entities = getattr(self.config, "entities", [])
-        for entity in entities:
-            entity_id = entity.id if hasattr(entity, "id") else entity["id"]
-            initial_metrics = getattr(entity, "initial_metrics", None) or getattr(entity, "metrics", None)
-            
-            if initial_metrics:
-                if hasattr(initial_metrics, "model_dump"):
-                    initial_metrics = initial_metrics.model_dump()
-                resolved[entity_id] = dict(initial_metrics)
-            else:
-                resolved[entity_id] = dict(global_baseline)
+        for entity in self.config.entities:
+            initial = entity.initial_metrics if entity.initial_metrics is not None else global_baseline
+            resolved[entity.id] = dict(initial)
 
         return resolved
 
@@ -191,18 +101,16 @@ class NominalGenerator:
         primitive_metrics: Dict[str, float]
     ) -> str:
         """Evaluates uncorrupted spatial movement along network topology routes."""
-        if not entity_context.active_route:
+        if not entity_context.active_route or not self.config.network_topology or not self.config.network_topology.routes:
             return entity_context.current_node
 
-        routes = getattr(self.config.network_topology, "routes", {})
-        route_info = routes.get(entity_context.active_route)
-        
+        route_info = self.config.network_topology.routes.get(entity_context.active_route)
         if not route_info:
             return entity_context.current_node
 
         # Extract max speed constraint
-        max_route_speed = float(getattr(route_info, "max_route_speed", 65.0))
-        distance_miles = float(getattr(route_info, "distance_miles", 0.0))
+        max_route_speed = float(route_info.max_route_speed)
+        distance_miles = float(route_info.distance_miles)
 
         # Enforce nominal speed metric
         if "transit_velocity_mph" in primitive_metrics:
@@ -232,11 +140,13 @@ class NominalGenerator:
         entity_context.task_elapsed_min += dt_minutes
 
         # Look up nominal duration for task
-        tasks = getattr(self.config.workflow_dag, "tasks", [])
-        task_spec = next((t for t in tasks if getattr(t, "task_id", None) == entity_context.active_task_id), None)
+        task_spec = next(
+            (t for t in self.config.workflow_dag.tasks if t.task_id == entity_context.active_task_id),
+            None
+        )
 
         if task_spec:
-            nominal_duration = float(getattr(task_spec, "nominal_duration_min", 0.0))
+            nominal_duration = float(task_spec.nominal_duration_min)
             if entity_context.task_elapsed_min >= nominal_duration:
                 entity_context.active_task_id = None
                 entity_context.task_elapsed_min = 0.0
@@ -244,16 +154,10 @@ class NominalGenerator:
     def _evaluate_derivative_metrics(self, primitive_metrics: Dict[str, float]) -> Dict[str, float]:
         """Calculates derived metrics using AST expression engine."""
         derived_results: Dict[str, float] = {}
-        metrics_decl = getattr(self.config, "metrics", [])
-
         evaluator = SafeFormulaEvaluator(primitive_metrics)
 
-        for metric_def in metrics_decl:
-            is_derivative = getattr(metric_def, "is_derivative", False)
-            if is_derivative:
-                name = getattr(metric_def, "name")
-                formula = getattr(metric_def, "formula", None)
-                if formula:
-                    derived_results[name] = evaluator.evaluate(formula)
+        for metric_def in self.config.metrics:
+            if metric_def.is_derivative and metric_def.formula:
+                derived_results[metric_def.name] = evaluator.evaluate(metric_def.formula)
 
         return derived_results

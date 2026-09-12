@@ -1,13 +1,23 @@
 import os
 import tempfile
+import re
 from pathlib import Path
 from typing import Iterable
+from datetime import timedelta
 
 from .exceptions import DimensionalMismatchError, InitialBoundsError, InvalidSchemaError
 from .schemas import SimulationConfig
 from .formulas import validate_derivative_metric_formulas
 
 TIME_UNIT_MULTIPLIERS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+TIME_UNIT_DURATIONS = {
+    's': timedelta(seconds=1),
+    'm': timedelta(minutes=1),
+    'h': timedelta(hours=1),
+    'd': timedelta(days=1),
+    'w': timedelta(weeks=1)
+}
 
 ALLOWED_SYSTEM_SOURCES = {
     "system.timestamp",
@@ -84,6 +94,13 @@ def _check_metric_keys_subset(keys: Iterable[str], allowed_names: set[str], cont
             f"Unrecognized metrics in {context}: {sorted(unknown)}. "
             f"Must be a subset of declared non-derivative metrics: {sorted(allowed_names)}."
         )
+
+def parse_duration_string(duration_str: str) -> timedelta:
+    match = re.match(r"^(\d+)([smhdw])$", duration_str.strip())
+    if not match:
+        raise ValueError(f"Invalid duration string format: '{duration_str}'")
+    val, unit = int(match.group(1)), match.group(2)
+    return val * TIME_UNIT_DURATIONS[unit]
 
 # ==============================================================================
 # INDIVIDUAL DOMAIN INVARIANTS

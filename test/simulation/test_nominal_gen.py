@@ -132,6 +132,24 @@ def test_ast_evaluator_disallowed_expressions():
     with pytest.raises(ValueError, match="Undeclared metric variable"):
         evaluator.evaluate("x + undeclared_var")
 
+def test_ast_evaluator_unary_operators():
+    evaluator = SafeFormulaEvaluator({"a": 5.0})
+    assert evaluator.evaluate("-a") == -5.0
+    assert evaluator.evaluate("+a") == 5.0
+
+def test_ast_evaluator_floor_div_and_keywords():
+    evaluator = SafeFormulaEvaluator({"a": 7.0, "b": 2.0, "speed": 150.0})
+    assert evaluator.evaluate("a // b") == 3.0
+    assert evaluator.evaluate("clamp(val=speed, low=0.0, high=100.0)") == 100.0
+
+def test_ast_evaluator_division_by_zero_safety():
+    evaluator = SafeFormulaEvaluator({"x": 10.0, "zero": 0.0})
+    
+    with pytest.raises(ZeroDivisionError):
+        evaluator.evaluate("x / zero")
+        
+    with pytest.raises(ZeroDivisionError):
+        evaluator.evaluate("x // zero")
 
 # ==============================================================================
 # BASELINE RESOLUTION TESTS
@@ -221,3 +239,40 @@ def test_nominal_state_vector_immutability(mock_config: MockConfig):
 
     with pytest.raises(FrozenInstanceError):
         result.current_node = "NEW_NODE"
+
+def test_evaluate_step_kinematics_overshoot(mock_config: MockConfig):
+    generator = NominalGenerator(mock_config)
+    ctx = EntityContext(
+        entity_id="ENTITY_DEFAULT",
+        entity_type="truck",
+        current_node="DEPOT_A",
+        active_route="DEPOT_A->HUB_B",
+        route_distance_covered=0.0
+    )
+    now = datetime(2026, 9, 1, 0, 0, 0)
+    dt = timedelta(minutes=45)  # 60 mph for 45 mins = 45 miles (route is 30 miles)
+
+    result = generator.evaluate_step(ctx, now, dt)
+
+    assert result.current_node == "HUB_B"
+    assert ctx.active_route is None
+    assert ctx.route_distance_covered == 0.0
+
+def test_toggles_disabled_bypasses_evaluation(mock_config: MockConfig):
+    mock_config.pipeline_toggles.use_network_topology = False
+    mock_config.pipeline_toggles.use_workflow_dag = False
+    
+    generator = NominalGenerator(mock_config)
+    ctx = EntityContext(
+        entity_id="ENTITY_DEFAULT",
+        entity_type="truck",
+        current_node="DEPOT_A",
+        active_route="DEPOT_A->HUB_B",
+        active_task_id="TASK_INSPECT"
+    )
+    
+    generator.evaluate_step(ctx, datetime(2026, 9, 1), timedelta(minutes=10))
+    
+    assert ctx.current_node == "DEPOT_A"
+    assert ctx.route_distance_covered == 0.0
+    assert ctx.task_elapsed_min == 0.0

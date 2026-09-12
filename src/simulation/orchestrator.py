@@ -1,29 +1,11 @@
 import logging
-import re
 from datetime import datetime, timedelta
 
 from src.config import SimulationConfig
+from src.config.invariants import parse_duration_string
 from src.simulation.nominal_gen import EntityContext, NominalGenerator, NominalStateVector
 
 logger = logging.getLogger(__name__)
-
-
-def parse_duration_string(duration_str: str) -> timedelta:
-    """Parses raw config duration/resolution strings (e.g., '30d', '1m', '1h') into timedelta."""
-    match = re.match(r"^(\d+)([s|m|h|d|w])$", duration_str.strip())
-    if not match:
-        raise ValueError(f"Invalid duration string format: '{duration_str}'")
-
-    value = int(match.group(1))
-    unit = match.group(2)
-    unit_map = {
-        's': 'seconds',
-        'm': 'minutes',
-        'h': 'hours',
-        'd': 'days',
-        'w': 'weeks'
-    }
-    return timedelta(**{unit_map[unit]: value})
 
 
 def build_entity_registry(config: SimulationConfig) -> dict[str, EntityContext]:
@@ -51,10 +33,13 @@ def build_entity_registry(config: SimulationConfig) -> dict[str, EntityContext]:
         active_route = None
         if config.pipeline_toggles.use_network_topology:
             prefix = f"{initial_loc}->"
-            for route_key in routes.keys():
-                if route_key.startswith(prefix):
-                    active_route = route_key
-                    break
+            matching_routes = [r for r in routes if r.startswith(prefix)]
+            if len(matching_routes) > 1:
+                logger.warning(
+                    f"Multiple candidate routes from '{initial_loc}' for entity '{entity_id}. "
+                    f"Selecting '{matching_routes[0]}'." 
+                )
+            active_route = matching_routes[0] if matching_routes else None
 
         # Resolve initial active task if DAG is enabled (find task with no predecessors)
         active_task_id = None

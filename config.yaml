@@ -8,8 +8,8 @@ meta:
 
 simulation:
   start_time: "2026-09-01T00:00:00Z" # ISO-8601 start timestamp
-  duration: "30d"                     # Total run time [quantity][s|m|h|d|w]
-  data_resolution: "1m"               # Frequency of emitted output rows
+  duration: "1d"                     # Total run time [quantity][s|m|h|d|w]
+  data_resolution: "30m"               # Frequency of emitted output rows
   epoch_interval: "1h"               # State engine & transition evaluation tick
 
 # ==============================================================================
