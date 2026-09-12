@@ -11,23 +11,14 @@ logger = logging.getLogger(__name__)
 def build_entity_registry(config: SimulationConfig) -> dict[str, EntityContext]:
     """Parses initial entity definitions from config and builds active state context objects."""
     registry: dict[str, EntityContext] = {}
-    entities = getattr(config, "entities", [])
-
     # Extract declared routes and DAG tasks if modules are enabled
-    routes = getattr(getattr(config, "network_topology", None), "routes", {}) or {}
-    tasks = getattr(getattr(config, "workflow_dag", None), "tasks", []) or []
+    routes = config.network_topology.routes if config.network_topology and config.network_topology.routes else {}
+    tasks = config.workflow_dag.tasks if config.workflow_dag else ()
 
-    for entity in entities:
-        entity_id = entity.id if hasattr(entity, "id") else entity["id"]
-        entity_type = getattr(entity, "entity_type", "generic_asset")
-        initial_loc = getattr(entity, "initial_location", "DEPOT")
-        
-        # Read initial metrics map
-        initial_metrics = getattr(entity, "initial_metrics", None)
-        if initial_metrics and hasattr(initial_metrics, "model_dump"):
-            initial_metrics = initial_metrics.model_dump()
-        elif not initial_metrics:
-            initial_metrics = {}
+    for entity in config.entities:
+        entity_id = entity.id
+        entity_type = entity.entity_type
+        initial_loc = entity.initial_location
 
         # Resolve initial active route if network topology is enabled
         active_route = None
@@ -44,11 +35,13 @@ def build_entity_registry(config: SimulationConfig) -> dict[str, EntityContext]:
         # Resolve initial active task if DAG is enabled (find task with no predecessors)
         active_task_id = None
         if config.pipeline_toggles.use_workflow_dag:
-            for task in tasks:
-                preds = getattr(task, "predecessors", [])
-                if not preds:
-                    active_task_id = getattr(task, "task_id", None)
-                    break
+            root_tasks = [task.task_id for task in tasks if not task.predecessors]
+            if len(root_tasks) > 1:
+                logger.warning(
+                    f"Multiple root tasks found in workflow DAG for entity '{entity_id}'. "
+                    f"Selecting '{root_tasks[0]}'."
+                )
+            active_task_id = root_tasks[0] if root_tasks else None
 
         registry[entity_id] = EntityContext(
             entity_id=entity_id,
@@ -59,7 +52,7 @@ def build_entity_registry(config: SimulationConfig) -> dict[str, EntityContext]:
             active_task_id=active_task_id,
             task_elapsed_min=0.0,
             is_blocked=False,
-            current_metrics=dict(initial_metrics)
+            current_metrics=dict(entity.initial_metrics)
         )
 
     return registry

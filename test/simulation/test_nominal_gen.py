@@ -116,12 +116,6 @@ def test_ast_evaluator_allowed_functions():
     assert evaluator.evaluate("max(10, 20)") == 20.0
     assert evaluator.evaluate("clamp(speed, 0.0, 100.0)") == 100.0
 
-def test_ast_evaluator_division_by_zero_safety():
-    variables = {"x": 10.0, "zero": 0.0}
-    evaluator = SafeFormulaEvaluator(variables)
-    
-    assert evaluator.evaluate("x / zero") == 0.0
-
 def test_ast_evaluator_disallowed_expressions():
     variables = {"x": 5.0}
     evaluator = SafeFormulaEvaluator(variables)

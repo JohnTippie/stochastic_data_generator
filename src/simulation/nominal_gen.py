@@ -87,11 +87,10 @@ class NominalGenerator:
         """Pre-evaluates baseline metric overrides per entity at startup."""
         resolved: Dict[str, Dict[str, float]] = {}
         global_baseline = self.config.nominal_generator.baseline_metrics
-        
+
         for entity in self.config.entities:
             initial = entity.initial_metrics if entity.initial_metrics is not None else global_baseline
             resolved[entity.id] = dict(initial)
-
         return resolved
 
     def _evaluate_ideal_kinematics(

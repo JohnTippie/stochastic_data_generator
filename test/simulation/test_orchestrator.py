@@ -150,6 +150,19 @@ def test_build_entity_registry_multiple_route_warning(caplog):
     assert registry["ENTITY_1"].active_route == "DEPOT_A->HUB_B"
     assert "Multiple candidate routes from 'DEPOT_A' for entity 'ENTITY_1'" in caplog.text
 
+def test_build_entity_registry_multiple_dag_root_tasks_warning(caplog):
+    config = MockConfig()
+    # Add a second root task with no predecessors
+    config.workflow_dag.tasks.append(
+        MockTask(task_id="TASK_INITIAL_SETUP", predecessors=[], nominal_duration_min=10.0)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        registry = build_entity_registry(config)
+
+    # Verifies it selects the first zero-predecessor task and emits the warning
+    assert registry["ENTITY_1"].active_task_id == "TASK_INSPECT"
+    assert "Multiple root tasks found in workflow DAG for entity 'ENTITY_1'" in caplog.text
 
 def test_build_entity_registry_dag_initial_task():
     config = MockConfig()
