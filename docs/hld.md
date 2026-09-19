@@ -450,7 +450,7 @@ Terminology will be domain-agnostic in nature with the following being the dicti
 
   * **Phase 2 - Domain Invariant Engine (`invariants.py`):** Validates relational and cross-field domain logic post-parsing:
 
-    * *Time Granularity Hierarchy:* $\text{Asserts resolution} \leq \text{epoch_interval} \leq \text{duration}$.
+    * *Time Granularity Hierarchy:* Asserts `data_resolution` $\leq$ `epoch_interval` $\leq$ `duration`.
 
     * *Dimensional Alignment:* Asserts all state metrics, drift vectors, volatilities, baseline metrics, initial entity metrics, and deferral drivers strictly match the canonical degrees of freedom declared in `metrics`.
 
@@ -483,8 +483,8 @@ Terminology will be domain-agnostic in nature with the following being the dicti
 
     Execution: If $P(\text{Wall Break})\gt \text{RNG}()$, the entity transitions to the adjacent state box and snaps its baseline $\mu_t$ inside the new state bounds.
 
-  * Resolution vs. Epoch Interpolation: Within an epoch, for each sub-step tick $dt=\frac{\text{resolution}}{\text{epoch_interval}}$, fractional drift is applied incrementally:
-    $\mu_{t+dt}=\mu_t+(\text{drift_rate}\cdot dt)+\mathcal{N}(0,\sigma\sqrt{dt})$
+  * Resolution vs. Epoch Interpolation: Within an epoch, for each sub-step tick $dt=\frac{\text{resolution}}{\text{epoch\_ interval}}$, fractional drift is applied incrementally:
+    $\mu_{t+dt}=\mu_t+(\text{drift\_ rate}\cdot dt)+\mathcal{N}(0,\sigma\sqrt{dt})$
   This creates smooth continuous intra-epoch motion rather than jagged teleports at epoch boundaries.
 
 ```mermaid

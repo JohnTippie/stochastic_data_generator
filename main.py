@@ -4,9 +4,7 @@ from custom_utils.formatted_logger import create_logger, update_logger_level
 from src.config import ConfigReader, ConfigError, SimulationConfig
 from src.simulation.orchestrator import run_simulation
 
-
 def main() -> int:
-
     # Initialize Logger
     try:
         logger = create_logger()
@@ -38,8 +36,6 @@ def main() -> int:
     except Exception as e:
         logger.critical(f"Unexpected runtime error in simulation execution loop: {e}")
         sys.exit(2)
-
-    
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from src.config import SimulationConfig
 from src.config.invariants import parse_duration_string
 from src.simulation.nominal_gen import EntityContext, NominalGenerator, NominalStateVector
+from src.simulation.sink import FileSink, extract_sink_fields
 
 logger = logging.getLogger(__name__)
 
@@ -80,52 +81,57 @@ def run_simulation(config: SimulationConfig) -> None:
     step_count = 0
 
     # 3. Time Step Event Loop (t -> t + dt)
-    while current_time < end_time:
-        step_count += 1
+    with FileSink(config.sink) as sink:
+        while current_time < end_time:
+            step_count += 1
 
-        for entity_id, entity_context in entity_registry.items():
-            prev_node = entity_context.current_node
-            prev_route = entity_context.active_route
+            for entity_id, entity_context in entity_registry.items():
+                prev_node = entity_context.current_node
+                prev_route = entity_context.active_route
 
-            # --- STEP 1: NOMINAL GENERATOR ---
-            payload: NominalStateVector = nominal_gen.evaluate_step(
-                entity_context=entity_context,
-                current_time=current_time,
-                dt=step_dt
-            )
-
-            # --- STEP 2: STATE ENGINE (IF TOGGLED) ---
-            if config.pipeline_toggles.use_state_engine:
-                # payload = state_engine.evaluate_step(payload, entity_context, current_time)
-                pass
-
-            # --- STEP 3: REALISM FILTER (IF TOGGLED) ---
-            if config.pipeline_toggles.use_realism_filter:
-                # payload = realism_filter.evaluate_step(payload, entity_context)
-                pass
-
-            # --- STEP 4: MALFORMATIONS FILTER (IF TOGGLED) ---
-            if config.pipeline_toggles.use_malformations_filter:
-                # payload = malformations_filter.evaluate_step(payload, entity_context)
-                pass
-
-            # Log validation telemetry
-            logger.debug(
-                f"[Step {step_count} | {payload.timestamp}] Entity: {entity_id} | "
-                f"Node: {payload.current_node} | Primitives: {payload.metrics} | "
-                f"Derivatives: {payload.derivative_metrics}"
-            )
-
-            if prev_route and not entity_context.active_route:
-                logger.info(
-                    f"[ROUTE COMPLETED] Entity '{entity_id}' finished route '{prev_route}'. "
-                    f"Arrived at '{entity_context.current_node}'"
+                # --- STEP 1: NOMINAL GENERATOR ---
+                payload: NominalStateVector = nominal_gen.evaluate_step(
+                    entity_context=entity_context,
+                    current_time=current_time,
+                    dt=step_dt
                 )
 
-            # Update entity context's current metric state to reflect latest evaluated primitives
-            entity_context.current_metrics = payload.metrics.copy()
+                # --- STEP 2: STATE ENGINE (IF TOGGLED) ---
+                if config.pipeline_toggles.use_state_engine:
+                    # payload = state_engine.evaluate_step(payload, entity_context, current_time)
+                    pass
 
-        # Advance global clock
-        current_time += step_dt
+                # --- STEP 3: REALISM FILTER (IF TOGGLED) ---
+                if config.pipeline_toggles.use_realism_filter:
+                    # payload = realism_filter.evaluate_step(payload, entity_context)
+                    pass
 
-    logger.info(f"Simulation completed successfully. Processed {step_count} total steps.")
+                # --- STEP 4: MALFORMATIONS FILTER (IF TOGGLED) ---
+                if config.pipeline_toggles.use_malformations_filter:
+                    # payload = malformations_filter.evaluate_step(payload, entity_context)
+                    pass
+
+                # Log validation telemetry
+                logger.debug(
+                    f"[Step {step_count} | {payload.timestamp}] Entity: {entity_id} | "
+                    f"Node: {payload.current_node} | Primitives: {payload.metrics} | "
+                    f"Derivatives: {payload.derivative_metrics}"
+                )
+
+                if prev_route and not entity_context.active_route:
+                    logger.info(
+                        f"[ROUTE COMPLETED] Entity '{entity_id}' finished route '{prev_route}'. "
+                        f"Arrived at '{entity_context.current_node}'"
+                    )
+
+                # --- STEP 5: FILE SNIK ---
+                row_dict = extract_sink_fields(payload, entity_context, config.sink)
+                sink.write_row(row_dict)
+
+                # Update entity context's current metric state to reflect latest evaluated primitives
+                entity_context.current_metrics = payload.metrics.copy()
+
+            # Advance global clock
+            current_time += step_dt
+
+        logger.info(f"Simulation completed successfully. Processed {step_count} total steps.")
