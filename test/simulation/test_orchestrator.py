@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+from pathlib import Path
 import pytest
 
 from src.simulation.orchestrator import build_entity_registry, run_simulation
@@ -63,9 +64,29 @@ class MockSimParams:
 
 
 @dataclass
+class MockSinkField:
+    name: str
+    source: str
+
+
+@dataclass
+class MockSink:
+    format: str = "csv"
+    output_path: Path = field(default_factory=lambda: Path("output/test_output.csv"))
+    fields: list[MockSinkField] = field(
+        default_factory=lambda: [
+            MockSinkField(name="timestamp", source="system.timestamp"),
+            MockSinkField(name="vehicle_id", source="entity.id"),
+            MockSinkField(name="speed_mph", source="metrics.transit_velocity_mph"),
+        ]
+    )
+
+
+@dataclass
 class MockConfig:
     simulation: MockSimParams = field(default_factory=MockSimParams)
     pipeline_toggles: MockToggles = field(default_factory=MockToggles)
+    sink: MockSink = field(default_factory=MockSink)
     metrics: list[MockMetricDef] = field(
         default_factory=lambda: [
             MockMetricDef(name="transit_velocity_mph"),
@@ -150,6 +171,7 @@ def test_build_entity_registry_multiple_route_warning(caplog):
     assert registry["ENTITY_1"].active_route == "DEPOT_A->HUB_B"
     assert "Multiple candidate routes from 'DEPOT_A' for entity 'ENTITY_1'" in caplog.text
 
+
 def test_build_entity_registry_multiple_dag_root_tasks_warning(caplog):
     config = MockConfig()
     # Add a second root task with no predecessors
@@ -163,6 +185,7 @@ def test_build_entity_registry_multiple_dag_root_tasks_warning(caplog):
     # Verifies it selects the first zero-predecessor task and emits the warning
     assert registry["ENTITY_1"].active_task_id == "TASK_INSPECT"
     assert "Multiple root tasks found in workflow DAG for entity 'ENTITY_1'" in caplog.text
+
 
 def test_build_entity_registry_dag_initial_task():
     config = MockConfig()
@@ -187,8 +210,9 @@ def test_build_entity_registry_toggles_disabled():
 # SIMULATION ORCHESTRATION LOOP TESTS
 # ==============================================================================
 
-def test_run_simulation_step_counting(caplog):
+def test_run_simulation_step_counting(caplog, tmp_path):
     config = MockConfig()
+    config.sink.output_path = tmp_path / "out.csv"
     config.simulation.duration = "1h"
     config.simulation.data_resolution = "15m"  # 1 hour / 15 mins = 4 steps
 
@@ -196,10 +220,12 @@ def test_run_simulation_step_counting(caplog):
         run_simulation(config)
 
     assert "Processed 4 total steps." in caplog.text
+    assert (tmp_path / "out.csv").exists()
 
 
-def test_run_simulation_route_completion_telemetry(caplog):
+def test_run_simulation_route_completion_telemetry(caplog, tmp_path):
     config = MockConfig()
+    config.sink.output_path = tmp_path / "out.csv"
     # 60 mph for 30 miles = 30 minutes to complete route (2 steps of 15m)
     config.simulation.duration = "45m"
     config.simulation.data_resolution = "15m"
@@ -210,10 +236,11 @@ def test_run_simulation_route_completion_telemetry(caplog):
     assert "[ROUTE COMPLETED] Entity 'ENTITY_1' finished route 'DEPOT_A->HUB_B'. Arrived at 'HUB_B'" in caplog.text
 
 
-def test_run_simulation_updates_entity_metrics():
+def test_run_simulation_updates_entity_metrics(tmp_path):
     config = MockConfig()
+    config.sink.output_path = tmp_path / "out.csv"
     config.simulation.duration = "15m"
     config.simulation.data_resolution = "15m"
 
     run_simulation(config)
-    # Orchestrator should run without exceptions and update state vectors per tick
+    assert (tmp_path / "out.csv").exists()
